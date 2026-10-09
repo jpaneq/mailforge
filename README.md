@@ -10,7 +10,10 @@ Cliente de correo de escritorio para **macOS y Windows** (Electron + React + Typ
 - **Seguimiento de lectura** con píxel propio (tracker self-hosted en `tracker/`, Cloudflare Workers gratuito) + notificación al abrirse
 - **Recordatorio de seguimiento** si no hay respuesta en N días; detección de respuesta
 - **Posponer (snooze)** mensajes
-- Plantillas, firmas por cuenta, atajos (`c` redactar, `/` buscar)
+- **Editor enriquecido:** tipos de letra y tamaños, negrita/cursiva/subrayado/tachado, colores y resaltado, títulos, alineación, listas, citas, código, enlaces, tablas (filas/columnas/cabecera/combinar), imágenes pegadas/arrastradas con tamaño ajustable y **dibujo sobre la imagen** (lápiz, marcador, flechas, formas, texto, deshacer). Corrector ortográfico (es/en)
+- **Adjuntos:** arrastrar y soltar al redactar, y descarga de los recibidos. Las imágenes viajan incrustadas (cid) y se ven en cualquier cliente
+- **Firmas** múltiples por cuenta con editor completo; una por defecto para correos nuevos y otra para respuestas, intercambiables al redactar. Las respuestas citan el mensaje original
+- Plantillas con formato, atajos (`c` redactar, `/` buscar)
 - **Spam:** carpeta Junk sincronizada, «Spam» / «No es spam» (se mueve en el servidor, también en iOS) y detección automática por capas: cabeceras del servidor, fallos de SPF/DKIM/DMARC y filtro bayesiano que aprende de lo que marcas. Muy conservador, nunca marca a quien ya tiene tu confianza o a quien has escrito
 - **Contador de no leídos** en el Dock de macOS y como insignia en la barra de tareas de Windows
 - Imágenes remotas bloqueadas al leer (anti-rastreo) y HTML saneado en iframe sandbox
@@ -32,7 +35,6 @@ Limitación honesta: Apple Mail Privacy Protection y Gmail precargan imágenes, 
 ## Roadmap
 - [ ] OAuth2 Gmail/Microsoft (sin contraseñas de aplicación)
 - [x] Adjuntos, deshacer envío, archivar y borrar (sincronizado con el servidor)
-- [ ] Editor enriquecido, descargar adjuntos recibidos
 - [ ] Carpetas/etiquetas personalizadas; IDLE push en tiempo real
 - [x] Spam con detección automática
 - [ ] Reglas y filtros, bandeja prioritaria

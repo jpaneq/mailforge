@@ -9,12 +9,13 @@ export interface Outgoing {
   to: string; cc?: string; bcc?: string; subject: string; html: string
   track?: boolean; followUpDays?: number; inReplyTo?: string
   attachments?: { filename: string; base64: string }[]
+  text?: string
 }
 
 const isGmail = (a: Account): boolean => /gmail\.com|googlemail\.com/.test(a.smtp_host)
 
 export async function buildRaw(a: Account, m: Outgoing): Promise<{ raw: Buffer; rcpt: string[] }> {
-  let html = m.html + (a.signature ? `<br><br>${a.signature}` : '')
+  let html = m.html
   const trackerUrl = getSetting('trackerUrl')
   if (m.track && trackerUrl) {
     const id = randomUUID()
@@ -22,10 +23,17 @@ export async function buildRaw(a: Account, m: Outgoing): Promise<{ raw: Buffer; 
     getDb().prepare('INSERT INTO tracked(id,account_id,to_addrs,subject,sent_at,follow_up_at) VALUES(?,?,?,?,?,?)')
       .run(id, a.id, m.to, m.subject, Date.now(), m.followUpDays ? Date.now() + m.followUpDays * 864e5 : null)
   }
+  // Imágenes pegadas/dibujadas (data URI) → imágenes incrustadas por cid, compatibles con todos los clientes
+  const inline: { filename: string; content: Buffer; contentType: string; cid: string; contentDisposition: 'inline' }[] = []
+  html = html.replace(/(<img\b[^>]*?\bsrc=")data:(image\/[\w.+-]+);base64,([^"]+)"/g, (_f, pre: string, mime: string, b64: string) => {
+    const cid = `img${inline.length}-${randomUUID()}@mailforge`
+    inline.push({ filename: `imagen${inline.length + 1}.${mime.split('/')[1].replace('jpeg', 'jpg').replace(/\+.*/, '')}`, content: Buffer.from(b64, 'base64'), contentType: mime, cid, contentDisposition: 'inline' })
+    return `${pre}cid:${cid}"`
+  })
   const mail = {
     from: `"${a.name}" <${a.email}>`, to: m.to, cc: m.cc, bcc: m.bcc,
-    subject: m.subject, html, inReplyTo: m.inReplyTo, date: new Date(),
-    attachments: m.attachments?.map(x => ({ filename: x.filename, content: Buffer.from(x.base64, 'base64') }))
+    subject: m.subject, html, text: m.text, inReplyTo: m.inReplyTo, date: new Date(),
+    attachments: [...inline, ...(m.attachments ?? []).map(x => ({ filename: x.filename, content: Buffer.from(x.base64, 'base64') }))]
   }
   const raw = await new MailComposer(mail).compile().build()
   const rcpt = [m.to, m.cc, m.bcc].filter(Boolean).join(',').split(',').map(x => x.trim()).filter(Boolean)

@@ -6,33 +6,10 @@ type Msg = any
 const api = () => window.api
 
 /* ---------- Iconos (trazos tipo Lucide, sin dependencias) ---------- */
-const PATHS: Record<string, string> = {
-  inbox: 'M22 12h-6l-2 3h-4l-2-3H2 M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z',
-  unread: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 12h.01',
-  star: 'm12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z',
-  send: 'm22 2-7 20-4-9-9-4z M22 2 11 13',
-  file: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h5',
-  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 6v6l4 2',
-  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z M12 8v4 M12 16h.01',
-  shieldok: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z m-3-10 2 2 4-4',
-  archive: 'M21 8v13H3V8 M1 3h22v5H1z M10 12h4',
-  trash: 'M3 6h18 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2 M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6 M10 11v6 M14 11v6',
-  reply: 'M9 17 4 12l5-5 M20 18v-2a4 4 0 0 0-4-4H4',
-  pen: 'M12 20h9 M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
-  gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
-  eye: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
-  cal: 'M3 4h18v18H3z M16 2v4 M8 2v4 M3 10h18 M12 14v3l2 1',
-  plus: 'M12 5v14 M5 12h14',
-  refresh: 'M23 4v6h-6 M1 20v-6h6 M3.5 9a9 9 0 0 1 14.9-3.4L23 10 M1 14l4.6 4.4A9 9 0 0 0 20.5 15',
-  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z m10 2-4.3-4.3',
-  x: 'M18 6 6 18 M6 6l12 12',
-  clip: 'm21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8L15.8 6.7',
-  user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
-  mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z m18 2-10 7L2 6'
-}
-function Icon({ n }: { n: string }): JSX.Element {
-  return <svg className="ic" viewBox="0 0 24 24" aria-hidden>{PATHS[n].split(/ (?=M)/).map((d, i) => <path key={i} d={d} />)}</svg>
-}
+import { Icon } from './icons'
+import { RichEditor } from './editor/RichEditor'
+import { emailize, fileToBase64, fmtSize, quoteHtml, readerHtml, sigBlock } from './editor/util'
+import type { Editor } from '@tiptap/react'
 
 /* ---------- Avatar con color estable por remitente ---------- */
 const GRADS = ['#5b5bf0,#8b5cf6', '#0ea5e9,#6366f1', '#10b981,#06b6d4', '#f59e0b,#ef4444', '#ec4899,#8b5cf6', '#14b8a6,#3b82f6', '#f97316,#ec4899', '#84cc16,#10b981']
@@ -65,6 +42,7 @@ export function App(): JSX.Element {
   const [counts, setCounts] = useState({ unread: 0, spam: 0 })
   const [sel, setSel] = useState<Msg | null>(null)
   const [thread, setThread] = useState<Msg[]>([])
+  const [atts, setAtts] = useState<{ index: number; filename: string; size: number }[] | 'loading' | null>(null)
   const [modal, setModal] = useState<'compose' | 'account' | 'scheduled' | 'tracking' | 'settings' | null>(null)
   const [reply, setReply] = useState<Msg | null>(null)
   const [draft, setDraft] = useState<Msg | null>(null)
@@ -83,8 +61,9 @@ export function App(): JSX.Element {
   useEffect(() => { document.title = counts.unread ? `(${counts.unread}) MailForge` : 'MailForge' }, [counts.unread])
 
   async function open(m: Msg): Promise<void> {
-    setSel(m)
+    setSel(m); setAtts(m.att ? 'loading' : null)
     setThread(await api().mail.thread(m.thread_id))
+    if (m.att) api().mail.attachments(m.id).then(setAtts).catch(() => setAtts(null))
     if (!m.seen) { await api().mail.flag(m.id, 'seen', true); void load() }
   }
   const act = async (fn: () => Promise<unknown>): Promise<void> => { await fn(); setSel(null); void load() }
@@ -143,7 +122,7 @@ export function App(): JSX.Element {
                 <Avatar name={who} />
                 <div className="meta">
                   <div className="top"><span className="from">{who}</span><span className="time">{fmtTime(m.date)}</span></div>
-                  <div className="subj">{m.starred ? <span style={{ color: '#f5b301' }}>★ </span> : null}{m.subject}{m.spam_reason && <span className="tag">auto</span>}</div>
+                  <div className="subj">{m.att ? <span style={{ color: 'var(--muted)' }}><Icon n="clip" /></span> : null}{m.starred ? <span style={{ color: '#f5b301' }}>★ </span> : null}{m.subject}{m.spam_reason && <span className="tag">auto</span>}</div>
                   <div className="snip">{m.snippet}</div>
                 </div>
               </div>
@@ -181,9 +160,13 @@ export function App(): JSX.Element {
                     <Avatar name={t.from_name || t.from_addr} large />
                     <div><b>{t.from_name || t.from_addr}</b><small>{t.from_name ? t.from_addr + ' · ' : ''}{new Date(t.date).toLocaleString()}</small></div>
                   </div>
-                  <iframe sandbox="" srcDoc={DOMPurify.sanitize(t.html || `<pre style="white-space:pre-wrap;font:inherit">${DOMPurify.sanitize(t.text)}</pre>`, { FORBID_TAGS: ['img'], FORBID_ATTR: ['srcset'] })} />
+                  <iframe sandbox="" srcDoc={readerHtml(t.html || `<pre style="white-space:pre-wrap;font:inherit">${DOMPurify.sanitize(t.text)}</pre>`)} />
                 </div>
               ))}
+              {atts && <div className="atts">
+                <b><Icon n="clip" />{atts === 'loading' ? 'Cargando adjuntos…' : `${atts.length} adjunto${atts.length === 1 ? '' : 's'}`}</b>
+                {atts !== 'loading' && atts.map(a => <button key={a.index} className="att" onClick={() => void api().mail.saveAttachment(sel.id, a.index)}><Icon n="download" /><span>{a.filename}</span><small>{fmtSize(a.size)}</small></button>)}
+              </div>}
               <div className="hint">Las imágenes remotas se bloquean para evitar rastreadores de terceros.</div>
             </>
           )}
@@ -199,9 +182,9 @@ export function App(): JSX.Element {
   )
 }
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }): JSX.Element {
+function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }): JSX.Element {
   return <div className="modal" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-    <div className="card"><div className="card-head"><h3>{title}</h3><button className="iconbtn" onClick={onClose} aria-label="Cerrar"><Icon n="x" /></button></div>{children}</div>
+    <div className={'card' + (wide ? ' wide' : '')}><div className="card-head"><h3>{title}</h3><button className="iconbtn" onClick={onClose} aria-label="Cerrar"><Icon n="x" /></button></div>{children}</div>
   </div>
 }
 
@@ -209,31 +192,68 @@ function Compose({ accounts, reply, draft, recovering, onClose }: { accounts: an
   const rec = recovering ? JSON.parse(recovering.data) : null
   const draftId = useRef<string>(recovering?.id ?? crypto.randomUUID())
   const serverUid = useRef<number | undefined>(draft?.uid)
-  const [from, setFrom] = useState(rec?.from ?? draft?.account_id ?? accounts[0]?.id)
-  const [to, setTo] = useState(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? '')
-  const [cc, setCc] = useState(rec?.cc ?? ''); const [bcc, setBcc] = useState(rec?.bcc ?? '')
+  const [sigs, setSigs] = useState<any[] | null>(null)
+  useEffect(() => { void api().signatures.list().then(setSigs) }, [])
+  if (!sigs) return <Modal title="Nuevo mensaje" onClose={onClose}><div className="empty">Cargando…</div></Modal>
+  return <ComposeInner key="c" {...{ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose }} />
+}
+
+const escHtml = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+
+function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose }: any): JSX.Element {
+  const [from, setFrom] = useState<number>(rec?.from ?? draft?.account_id ?? accounts[0]?.id)
+  const [to, setTo] = useState<string>(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? '')
+  const [cc, setCc] = useState<string>(rec?.cc ?? ''); const [bcc, setBcc] = useState<string>(rec?.bcc ?? '')
+  const [showCc, setShowCc] = useState(!!(rec?.cc || rec?.bcc))
   const [subject, setSubject] = useState<string>(rec?.subject ?? draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
-  const [body, setBody] = useState<string>(rec?.body ?? draft?.text ?? '')
+  const mySigs = (acc: number): any[] => sigs.filter((x: any) => x.account_id === acc)
+  const defaultSig = (acc: number): any | undefined => mySigs(acc).find((x: any) => (reply ? x.for_reply : x.for_new))
+  const [sigId, setSigId] = useState<number>(rec || draft ? 0 : defaultSig(from)?.id ?? 0)
+  const initial = useRef<string>(
+    rec ? (rec.html ?? `<p>${escHtml(rec.body ?? '')}</p>`)
+      : draft ? (draft.html || `<p>${escHtml(draft.text ?? '')}</p>`)
+        : '<p></p>' + sigBlock(defaultSig(from)?.html ?? '') + (reply ? quoteHtml(reply) : '')
+  )
+  const [html, setHtml] = useState<string>(initial.current)
+  const [text, setText] = useState('')
   const [track, setTrack] = useState(true)
   const [follow, setFollow] = useState(0)
   const [at, setAt] = useState('')
   const [tpls, setTpls] = useState<any[]>([])
   const [err, setErr] = useState('')
-  const [files, setFiles] = useState<{ filename: string; base64: string }[]>([])
+  const [files, setFiles] = useState<{ filename: string; base64: string; size: number }[]>([])
+  const [dropping, setDropping] = useState(false)
   const [undo, setUndo] = useState(0)
+  const ed = useRef<Editor | null>(null)
   useEffect(() => { void api().templates.list().then(setTpls) }, [])
 
+  const totalSize = files.reduce((n, f) => n + f.size, 0)
   const payload = () => ({
     to, cc: cc || undefined, bcc: bcc || undefined, subject,
-    html: body.split('\n').map(l => DOMPurify.sanitize(l)).join('<br>'),
-    track, followUpDays: follow || undefined, attachments: files, inReplyTo: reply?.message_id || undefined
+    html: emailize(html), text: text || undefined,
+    track, followUpDays: follow || undefined, attachments: files.map(({ filename, base64 }) => ({ filename, base64 })), inReplyTo: reply?.message_id || undefined
   })
-  async function addFiles(list: FileList | null): Promise<void> {
-    const out = await Promise.all([...(list ?? [])].map(f => new Promise<{ filename: string; base64: string }>(res => {
-      const r = new FileReader(); r.onload = () => res({ filename: f.name, base64: String(r.result).split(',')[1] }); r.readAsDataURL(f)
-    })))
+  async function attach(list: File[] | FileList | null): Promise<void> {
+    const out = await Promise.all([...(list ?? [])].map(fileToBase64))
     setFiles(p => [...p, ...out])
   }
+
+  // Cambiar la firma dentro del editor (bloque localizable)
+  function swapSignature(sigHtml: string): void {
+    const e = ed.current; if (!e) return
+    let found: { pos: number; size: number } | null = null
+    e.state.doc.descendants((n, pos) => { if (n.type.name === 'signature') { found = { pos, size: n.nodeSize }; return false } return true })
+    const f = found as { pos: number; size: number } | null
+    if (f) { if (sigHtml) e.chain().insertContentAt({ from: f.pos, to: f.pos + f.size }, sigBlock(sigHtml)).run(); else e.chain().deleteRange({ from: f.pos, to: f.pos + f.size }).run() }
+    else if (sigHtml) { const first = e.state.doc.firstChild; e.chain().insertContentAt(first ? first.nodeSize : 0, sigBlock(sigHtml)).run() }
+  }
+  function changeAccount(id: number): void {
+    setFrom(id)
+    const d = sigs.find((x: any) => x.account_id === id && (reply ? x.for_reply : x.for_new))
+    setSigId(d?.id ?? 0); swapSignature(d?.html ?? '')
+  }
+  function changeSig(id: number): void { setSigId(id); swapSignature(sigs.find((x: any) => x.id === id)?.html ?? '') }
+
   const cancelled = useRef(false)
   async function send(): Promise<void> {
     try {
@@ -249,15 +269,15 @@ function Compose({ accounts, reply, draft, recovering, onClose }: { accounts: an
 
   // Autoguardado: local a los 1,5 s de dejar de teclear; servidor cada 20 s si hubo cambios.
   const dirty = useRef(false)
-  const latest = useRef({ from, to, cc, bcc, subject, body })
-  latest.current = { from, to, cc, bcc, subject, body }
-  const hasContent = !!(to || subject || body.trim())
+  const latest = useRef<any>({})
+  latest.current = { from, to, cc, bcc, subject, html }
+  const hasContent = !!(to || subject || text.trim() || /<(img|table)/.test(html))
   useEffect(() => {
     if (!hasContent) return
     dirty.current = true
     const t = setTimeout(() => { void api().autodraft.save(draftId.current, JSON.stringify(latest.current)) }, 1500)
     return () => clearTimeout(t)
-  }, [from, to, cc, bcc, subject, body, hasContent])
+  }, [from, to, cc, bcc, subject, html, hasContent])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const t = setInterval(async () => {
       if (!dirty.current || !from) return
@@ -271,30 +291,42 @@ function Compose({ accounts, reply, draft, recovering, onClose }: { accounts: an
     if (serverUid.current && from) await api().send.draftDelete(from, serverUid.current).catch(() => {})
   }
 
-  return <Modal title={reply ? 'Responder' : 'Nuevo mensaje'} onClose={onClose}>
-    <div className="hint" style={{ marginTop: -6 }}>Se guarda automáticamente. Si cierras sin enviar, podrás recuperarlo.</div>
-    <label className="field"><span>De</span><select value={from} onChange={e => setFrom(Number(e.target.value))}>{accounts.map(a => <option key={a.id} value={a.id}>{a.email}</option>)}</select></label>
-    <label className="field"><span>Para</span><input value={to} onChange={e => setTo(e.target.value)} autoFocus /></label>
-    <label className="field"><span>Cc</span><input value={cc} onChange={e => setCc(e.target.value)} /></label>
-    <label className="field"><span>Cco</span><input value={bcc} onChange={e => setBcc(e.target.value)} /></label>
-    <label className="field"><span>Asunto</span><input value={subject} onChange={e => setSubject(e.target.value)} /></label>
-    <select value="" onChange={e => { const t = tpls.find(x => x.id === Number(e.target.value)); if (t) { setSubject(s => s || t.subject); setBody(b => b + t.body) } }}>
-      <option value="">Insertar plantilla…</option>{tpls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-    </select>
-    <textarea rows={11} value={body} onChange={e => setBody(e.target.value)} placeholder="Escribe tu mensaje…" />
-    <div className="row-opts">
-      <label className="toggle"><input type="checkbox" checked={track} onChange={e => setTrack(e.target.checked)} />Seguimiento de lectura</label>
-      <label>Recordar si no responden en <select value={follow} onChange={e => setFollow(Number(e.target.value))}><option value={0}>nunca</option><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option></select></label>
-      <label>Programar: <input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label>
-    </div>
-    <div className="row-opts"><Icon n="clip" /><input type="file" multiple onChange={e => void addFiles(e.target.files)} />{files.map((f, i) => <span key={i} className="pill">{f.filename}</span>)}</div>
-    {err && <div style={{ color: 'var(--danger)' }}>{err}</div>}
-    <div className="actions">
-      {(draft || rec || hasContent) && <button className="btn" onClick={() => void discardAuto().then(onClose)}>Descartar</button>}
-      <button className="btn" onClick={async () => { try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current; await api().autodraft.delete(draftId.current); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
-      {undo > 0
-        ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
-        : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}
+  return <Modal title={reply ? 'Responder' : 'Nuevo mensaje'} onClose={onClose} wide>
+    <div onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={e => { if (e.currentTarget === e.target) setDropping(false) }}
+      onDrop={e => { if (e.dataTransfer.files.length && !(e.target as HTMLElement).closest('.ProseMirror')) { e.preventDefault(); void attach(e.dataTransfer.files) } setDropping(false) }}
+      className={'compose' + (dropping ? ' dropping' : '')}>
+      <div className="hint">Se guarda automáticamente. Si cierras sin enviar, podrás recuperarlo.</div>
+      <div className="compose-fields">
+        <label className="field"><span>De</span>
+          <div className="inline2"><select value={from} onChange={e => changeAccount(Number(e.target.value))}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name ? `${a.name} <${a.email}>` : a.email}</option>)}</select>
+            <select title="Firma" value={sigId} onChange={e => changeSig(Number(e.target.value))}><option value={0}>Sin firma</option>{mySigs(from).map((x: any) => <option key={x.id} value={x.id}>Firma: {x.name}</option>)}</select></div></label>
+        <label className="field"><span>Para</span><div className="inline2"><input value={to} onChange={e => setTo(e.target.value)} autoFocus />{!showCc && <button type="button" className="link-btn" onClick={() => setShowCc(true)}>Cc / Cco</button>}</div></label>
+        {showCc && <><label className="field"><span>Cc</span><input value={cc} onChange={e => setCc(e.target.value)} /></label>
+          <label className="field"><span>Cco</span><input value={bcc} onChange={e => setBcc(e.target.value)} /></label></>}
+        <label className="field"><span>Asunto</span><div className="inline2"><input value={subject} onChange={e => setSubject(e.target.value)} />
+          <select value="" onChange={e => { const t = tpls.find(x => x.id === Number(e.target.value)); if (t) { setSubject(s => s || t.subject); ed.current?.chain().focus().insertContent(t.body).run() } }} style={{ maxWidth: 170 }}>
+            <option value="">Plantilla…</option>{tpls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div></label>
+      </div>
+      <RichEditor initialHtml={initial.current} minHeight={260} onChange={(h, t) => { setHtml(h); setText(t) }} onReady={e => { ed.current = e }} onAttachFiles={f => void attach(f)} />
+      <div className="attach-row">
+        <label className="chip"><Icon n="clip" />Adjuntar archivos<input type="file" multiple hidden onChange={e => { void attach(e.target.files); e.target.value = '' }} /></label>
+        {files.map((f, i) => <span key={i} className="att-chip"><Icon n="file" />{f.filename}<small>{fmtSize(f.size)}</small><button type="button" aria-label="Quitar" onClick={() => setFiles(p => p.filter((_, j) => j !== i))}><Icon n="x" /></button></span>)}
+        {files.length > 0 && <small className={totalSize > 20e6 ? 'warn-t' : ''}>{fmtSize(totalSize)} en total{totalSize > 20e6 ? ' — muchos servidores rechazan más de 20–25 MB' : ''}</small>}
+        {dropping && <span className="drop-hint">Suelta los archivos para adjuntarlos</span>}
+      </div>
+      <div className="row-opts">
+        <label className="toggle"><input type="checkbox" checked={track} onChange={e => setTrack(e.target.checked)} />Seguimiento de lectura</label>
+        <label>Recordar si no responden en <select value={follow} onChange={e => setFollow(Number(e.target.value))}><option value={0}>nunca</option><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option></select></label>
+        <label>Programar: <input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label>
+      </div>
+      {err && <div style={{ color: 'var(--danger)' }}>{err}</div>}
+      <div className="actions">
+        {(draft || rec || hasContent) && <button className="btn" onClick={() => void discardAuto().then(onClose)}>Descartar</button>}
+        <button className="btn" onClick={async () => { try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current; await api().autodraft.delete(draftId.current); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
+        {undo > 0
+          ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
+          : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}
+      </div>
     </div>
   </Modal>
 }
@@ -358,14 +390,17 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
   const [autoSpam, setAutoSpam] = useState(true)
   const [tpl, setTpl] = useState({ name: '', subject: '', body: '' })
   const [tpls, setTpls] = useState<any[]>([])
-  const [sigs, setSigs] = useState<Record<number, string>>({})
+  const [sigList, setSigList] = useState<any[]>([])
+  const [editSig, setEditSig] = useState<any | null>(null)
+  const [tplKey, setTplKey] = useState(0)
+  const loadS = (): void => { void api().signatures.list().then(setSigList) }
   const loadT = (): void => { void api().templates.list().then(setTpls) }
   useEffect(() => {
-    void api().settings.get('trackerUrl').then(setUrl); void api().settings.get('trackerKey').then(setKey); loadT()
+    void api().settings.get('trackerUrl').then(setUrl); void api().settings.get('trackerKey').then(setKey); loadT(); loadS()
     void api().settings.get('autoSpam').then((v: string) => setAutoSpam(v !== '0'))
     void Promise.all([api().settings.get('relayUrl'), api().settings.get('relayToken')]).then(([u, t]) => setRelay({ url: u, token: t }))
   }, [])
-  return <Modal title="Ajustes" onClose={onClose}>
+  return <Modal title="Ajustes" onClose={onClose} wide>
     <h5>Spam</h5>
     <label className="toggle"><input type="checkbox" checked={autoSpam} onChange={e => { setAutoSpam(e.target.checked); void api().settings.set('autoSpam', e.target.checked ? '1' : '0') }} />
       Detección automática de spam (cabeceras del servidor, autenticación y aprendizaje de lo que marcas)</label>
@@ -381,15 +416,31 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
       await api().settings.set('relayUrl', relay.url); await api().settings.set('relayToken', relay.token)
       try { const r = await fetch(relay.url.replace(/\/$/, '') + '/health'); setRelayMsg(r.ok ? '✓ Relay conectado' : 'Respuesta ' + r.status) } catch { setRelayMsg('✗ No se pudo conectar') }
     }}>Guardar y probar</button></div>
-    <h5>Firmas</h5>
-    {accounts.map(a => <div key={a.id} style={{ display: 'grid', gap: 6 }}><small>{a.email}</small>
-      <textarea rows={2} defaultValue={a.signature} onChange={e => setSigs(s => ({ ...s, [a.id]: e.target.value }))} />
-      <div className="actions"><button className="btn" onClick={() => void api().accounts.signature(a.id, sigs[a.id] ?? a.signature)}>Guardar firma</button></div></div>)}
+    <h5>Firmas por cuenta</h5>
+    {accounts.map(a => <div key={a.id} className="sig-acc">
+      <div className="sig-acc-h"><b>{a.email}</b><button className="chip" onClick={() => setEditSig({ account_id: a.id, name: '', html: '', for_new: sigList.some(x => x.account_id === a.id) ? 0 : 1, for_reply: sigList.some(x => x.account_id === a.id) ? 0 : 1 })}><Icon n="plus" />Nueva firma</button></div>
+      {sigList.filter(x => x.account_id === a.id).map(x => <div key={x.id} className="sig-item">
+        <div><b>{x.name}</b>{x.for_new ? <span className="pill">nuevos</span> : null}{x.for_reply ? <span className="pill">respuestas</span> : null}
+          <div className="sig-prev" dangerouslySetInnerHTML={{ __html: readerHtml(x.html) }} /></div>
+        <div className="actions"><button className="btn" onClick={() => setEditSig(x)}>Editar</button><button className="btn" onClick={() => void api().signatures.delete(x.id).then(loadS)}>Borrar</button></div>
+      </div>)}
+      {!sigList.some(x => x.account_id === a.id) && <div className="hint">Sin firmas. Crea una para esta cuenta.</div>}
+    </div>)}
+    {editSig && <div className="sig-edit">
+      <input placeholder="Nombre de la firma (p. ej. Trabajo)" value={editSig.name} onChange={e => setEditSig({ ...editSig, name: e.target.value })} />
+      <RichEditor key={editSig.id ?? 'new'} initialHtml={editSig.html} minHeight={110} placeholder="Escribe tu firma: nombre, cargo, teléfono, logotipo…" onChange={h => setEditSig((p: any) => ({ ...p, html: h }))} />
+      <div className="row-opts">
+        <label className="toggle"><input type="checkbox" checked={!!editSig.for_new} onChange={e => setEditSig({ ...editSig, for_new: e.target.checked ? 1 : 0 })} />Usar en correos nuevos</label>
+        <label className="toggle"><input type="checkbox" checked={!!editSig.for_reply} onChange={e => setEditSig({ ...editSig, for_reply: e.target.checked ? 1 : 0 })} />Usar en respuestas</label>
+      </div>
+      <div className="actions"><button className="btn" onClick={() => setEditSig(null)}>Cancelar</button>
+        <button className="btn primary" disabled={!editSig.name.trim()} onClick={() => void api().signatures.save({ ...editSig, html: emailize(editSig.html) }).then(() => { setEditSig(null); loadS() })}>Guardar firma</button></div>
+    </div>}
     <h5>Plantillas</h5>
     {tpls.map(t => <div key={t.id} className="actions" style={{ justifyContent: 'space-between' }}><span>{t.name}</span><button className="btn" onClick={() => void api().templates.delete(t.id).then(loadT)}>Borrar</button></div>)}
     <input placeholder="Nombre" value={tpl.name} onChange={e => setTpl({ ...tpl, name: e.target.value })} />
     <input placeholder="Asunto" value={tpl.subject} onChange={e => setTpl({ ...tpl, subject: e.target.value })} />
-    <textarea rows={3} placeholder="Cuerpo" value={tpl.body} onChange={e => setTpl({ ...tpl, body: e.target.value })} />
-    <div className="actions"><button className="btn" disabled={!tpl.name} onClick={() => void api().templates.save(tpl).then(() => { setTpl({ name: '', subject: '', body: '' }); loadT() })}>Guardar plantilla</button></div>
+    <RichEditor key={tplKey} initialHtml="" minHeight={110} placeholder="Cuerpo de la plantilla…" onChange={h => setTpl(p => ({ ...p, body: emailize(h) }))} />
+    <div className="actions"><button className="btn" disabled={!tpl.name} onClick={() => void api().templates.save(tpl).then(() => { setTpl({ name: '', subject: '', body: '' }); setTplKey(k => k + 1); loadT() })}>Guardar plantilla</button></div>
   </Modal>
 }

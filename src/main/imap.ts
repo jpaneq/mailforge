@@ -31,8 +31,8 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
       const total = (c.mailbox as { exists: number }).exists
       const range = last ? `${last + 1}:*` : `${Math.max(1, total - limit + 1)}:*`
       const ins = db.prepare(`INSERT OR IGNORE INTO messages
-        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred,role)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred,role,att)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       for await (const m of c.fetch(range, { uid: true, source: true, flags: true }, { uid: true })) {
         if (last && m.uid <= last) continue
         if (!m.source) continue
@@ -41,6 +41,13 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
         const refs = ([] as string[]).concat(p.references ?? [])
         const thread = refs[0] ?? p.inReplyTo ?? p.messageId ?? `uid-${m.uid}`
         const text = p.text ?? ''
+        // Imágenes incrustadas (cid:) → data URI para que se vean sin descargar nada más
+        let html = typeof p.html === 'string' ? p.html : ''
+        for (const at of p.attachments ?? []) {
+          if (at.cid && /^image\//.test(at.contentType) && at.size < 3_000_000)
+            html = html.split(`cid:${at.cid}`).join(`data:${at.contentType};base64,${at.content.toString('base64')}`)
+        }
+        const attCount = (p.attachments ?? []).filter(at => !(at.cid && at.related)).length
         const seen = m.flags?.has('\\Seen') ? 1 : 0
         const sp = { message_id: p.messageId, subject: p.subject ?? '', from_addr: from?.address ?? '', text }
         if (role === 'inbox' && !seen && getSetting('autoSpam', '1') !== '0') {
@@ -53,8 +60,8 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
         const r = ins.run(a.id, folder, m.uid, p.messageId ?? null, thread, p.subject ?? '(sin asunto)',
           from?.name ?? '', from?.address ?? '', p.to ? [p.to].flat().map(t => t.text).join(', ') : '',
           (p.date ?? new Date()).getTime(), text.replace(/\s+/g, ' ').slice(0, 160),
-          typeof p.html === 'string' ? p.html : '', text,
-          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0, role)
+          html, text,
+          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0, role, attCount)
         if (r.changes) {
           added++
           db.prepare('INSERT INTO messages_fts(rowid,subject,from_addr,text) VALUES(?,?,?,?)')
@@ -190,5 +197,23 @@ export async function moveMessage(a: Account, folder: string, uid: number, targe
     if (!dest) throw new Error('No se encontró la carpeta de destino en el servidor')
     const lock = await c.getMailboxLock(folder)
     try { await c.messageMove({ uid: String(uid) } as never, dest, { uid: true }) } finally { lock.release() }
+  } finally { await c.logout().catch(() => {}) }
+}
+
+export interface AttInfo { index: number; filename: string; size: number; contentType: string }
+
+/** Descarga el mensaje del servidor y devuelve sus adjuntos (no los incrustados). */
+export async function fetchAttachments(a: Account, folder: string, uid: number): Promise<{ info: AttInfo; content: Buffer }[]> {
+  const c = client(a)
+  await c.connect()
+  try {
+    const lock = await c.getMailboxLock(folder)
+    try {
+      const m = await c.fetchOne(String(uid), { source: true }, { uid: true })
+      if (!m || !m.source) return []
+      const p = await simpleParser(m.source)
+      return (p.attachments ?? []).filter(x => !(x.cid && x.related))
+        .map((x, i) => ({ info: { index: i, filename: x.filename ?? `adjunto-${i + 1}`, size: x.size, contentType: x.contentType }, content: x.content }))
+    } finally { lock.release() }
   } finally { await c.logout().catch(() => {}) }
 }

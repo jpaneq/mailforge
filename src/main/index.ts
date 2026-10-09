@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
+import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
-import { moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
+import { fetchAttachments, moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
 import { sendMail, saveDraftMail, removeDraft, Outgoing } from './smtp'
 import { refreshBadge, counts } from './badge'
 import { train, trust } from './spam'
@@ -12,7 +13,7 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280, height: 820, minWidth: 900, minHeight: 600,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true }
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, spellcheck: true }
   })
   win.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' } })
   if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -32,8 +33,31 @@ function registerIpc(): void {
     return id
   })
   ipcMain.handle('accounts:remove', (_e, id: number) => removeAccount(id))
-  ipcMain.handle('accounts:signature', (_e, id: number, sig: string) =>
-    db.prepare('UPDATE accounts SET signature=? WHERE id=?').run(sig, id))
+  ipcMain.handle('signatures:list', () => db.prepare('SELECT * FROM signatures ORDER BY account_id, id').all())
+  ipcMain.handle('signatures:save', (_e, s: { id?: number; account_id: number; name: string; html: string; for_new: number; for_reply: number }) => {
+    // Solo una firma por defecto por cuenta y tipo
+    let id = s.id
+    if (id) db.prepare('UPDATE signatures SET name=?, html=?, for_new=?, for_reply=? WHERE id=?').run(s.name, s.html, s.for_new, s.for_reply, id)
+    else id = Number(db.prepare('INSERT INTO signatures(account_id,name,html,for_new,for_reply) VALUES(?,?,?,?,?)').run(s.account_id, s.name, s.html, s.for_new, s.for_reply).lastInsertRowid)
+    if (s.for_new) db.prepare('UPDATE signatures SET for_new=0 WHERE account_id=? AND id<>?').run(s.account_id, id)
+    if (s.for_reply) db.prepare('UPDATE signatures SET for_reply=0 WHERE account_id=? AND id<>?').run(s.account_id, id)
+    return id
+  })
+  ipcMain.handle('signatures:delete', (_e, id: number) => db.prepare('DELETE FROM signatures WHERE id=?').run(id))
+  ipcMain.handle('mail:attachments', async (_e, id: number) => {
+    const m = db.prepare('SELECT account_id,folder,uid FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
+    return (await fetchAttachments(getAccount(m.account_id), m.folder, m.uid)).map(x => x.info)
+  })
+  ipcMain.handle('mail:saveAttachment', async (e, id: number, index: number) => {
+    const m = db.prepare('SELECT account_id,folder,uid FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
+    const att = (await fetchAttachments(getAccount(m.account_id), m.folder, m.uid))[index]
+    if (!att) throw new Error('Adjunto no encontrado')
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const r = await dialog.showSaveDialog(win!, { defaultPath: att.info.filename })
+    if (r.canceled || !r.filePath) return false
+    writeFileSync(r.filePath, att.content)
+    return true
+  })
 
   ipcMain.handle('mail:list', (_e, q: Q) => {
     const now = Date.now()
@@ -49,7 +73,7 @@ function registerIpc(): void {
       from = 'messages m JOIN messages_fts f ON f.rowid=m.id'
       where.push('messages_fts MATCH ?'); args.push(q.query.replace(/["']/g, ' ') + '*')
     }
-    return db.prepare(`SELECT m.id,m.message_id,m.role,(SELECT reason FROM auto_spam WHERE message_id=m.message_id) AS spam_reason,m.to_addrs,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
+    return db.prepare(`SELECT m.id,m.message_id,m.att,m.role,(SELECT reason FROM auto_spam WHERE message_id=m.message_id) AS spam_reason,m.to_addrs,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
       FROM ${from} WHERE ${where.join(' AND ')} ORDER BY m.date DESC LIMIT 500`).all(...args)
   })
   ipcMain.handle('mail:thread', (_e, threadId: string) =>
@@ -110,6 +134,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setSpellCheckerLanguages(['es-ES', 'en-US'])
   registerIpc()
   createWindow()
   startBackground()

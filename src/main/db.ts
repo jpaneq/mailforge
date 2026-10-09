@@ -42,9 +42,18 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS trained (message_id TEXT PRIMARY KEY, cls INTEGER);
     CREATE TABLE IF NOT EXISTS trusted (sender TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS auto_spam (message_id TEXT PRIMARY KEY, reason TEXT);
+    CREATE TABLE IF NOT EXISTS signatures (id INTEGER PRIMARY KEY, account_id INTEGER, name TEXT, html TEXT, for_new INTEGER DEFAULT 0, for_reply INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
   `)
   try { db.exec("ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'inbox'"); db.exec("UPDATE messages SET role='sent' WHERE folder<>'INBOX'") } catch { /* ya migrada */ }
+  try { db.exec('ALTER TABLE messages ADD COLUMN att INTEGER DEFAULT 0') } catch { /* ya migrada */ }
+  // Firmas antiguas (texto plano por cuenta) → tabla de firmas
+  const old = db.prepare("SELECT id, signature FROM accounts WHERE signature IS NOT NULL AND signature<>''").all() as { id: number; signature: string }[]
+  for (const a of old) {
+    if (db.prepare('SELECT 1 FROM signatures WHERE account_id=?').get(a.id)) continue
+    const html = a.signature.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
+    db.prepare("INSERT INTO signatures(account_id,name,html,for_new,for_reply) VALUES(?,?,?,1,1)").run(a.id, 'Principal', html)
+  }
   return db
 }
 
