@@ -3,7 +3,7 @@ import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
 import { moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
-import { sendMail, Outgoing } from './smtp'
+import { sendMail, saveDraftMail, Outgoing } from './smtp'
 import { cancelScheduled, listScheduled, scheduleSend, startBackground } from './scheduler'
 
 function createWindow(): void {
@@ -37,7 +37,7 @@ function registerIpc(): void {
     const now = Date.now()
     const where: string[] = []; const args: unknown[] = []
     if (q.account) { where.push('m.account_id=?'); args.push(q.account) }
-    where.push(q.view === 'sent' ? "m.folder<>'INBOX'" : "m.folder='INBOX'")
+    where.push(q.view === 'sent' ? "m.role='sent'" : q.view === 'drafts' ? "m.role='drafts'" : "m.role='inbox'")
     if (q.view === 'snoozed') where.push('m.snoozed_until>' + now)
     else where.push('(m.snoozed_until IS NULL OR m.snoozed_until<=' + now + ')')
     if (q.view === 'starred') where.push('m.starred=1')
@@ -47,7 +47,7 @@ function registerIpc(): void {
       from = 'messages m JOIN messages_fts f ON f.rowid=m.id'
       where.push('messages_fts MATCH ?'); args.push(q.query.replace(/["']/g, ' ') + '*')
     }
-    return db.prepare(`SELECT m.id,m.message_id,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
+    return db.prepare(`SELECT m.id,m.message_id,m.role,m.to_addrs,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
       FROM ${from} WHERE ${where.join(' AND ')} ORDER BY m.date DESC LIMIT 500`).all(...args)
   })
   ipcMain.handle('mail:thread', (_e, threadId: string) =>
@@ -69,6 +69,7 @@ function registerIpc(): void {
   ipcMain.handle('send:now', (_e, accountId: number, m: Outgoing) => sendMail(getAccount(accountId), m))
   ipcMain.handle('send:schedule', (_e, accountId: number, m: Outgoing, at: number) => scheduleSend(accountId, m, at))
   ipcMain.handle('send:list', () => listScheduled())
+  ipcMain.handle('send:draft', (_e, accountId: number, m: Outgoing) => saveDraftMail(getAccount(accountId), m))
   ipcMain.handle('send:cancel', (_e, id: number) => cancelScheduled(id))
 
   ipcMain.handle('tracked:list', () => db.prepare('SELECT * FROM tracked ORDER BY sent_at DESC LIMIT 200').all())

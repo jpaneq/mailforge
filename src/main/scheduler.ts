@@ -16,9 +16,22 @@ export async function scheduleSend(accountId: number, m: Outgoing, sendAt: numbe
   }
   db.prepare('INSERT INTO scheduled(account_id,payload,send_at) VALUES(?,?,?)').run(accountId, JSON.stringify(m), sendAt)
 }
-export const listScheduled = (): unknown[] =>
-  getDb().prepare("SELECT id,account_id,payload,send_at,status,error FROM scheduled WHERE status NOT IN ('sent','cancelled') ORDER BY send_at").all()
-export async function cancelScheduled(id: number): Promise<void> {
+export async function listScheduled(): Promise<unknown[]> {
+  const db = getDb()
+  const local = db.prepare("SELECT id,account_id,payload,send_at,status,error FROM scheduled WHERE status IN ('pending','sending','error') ORDER BY send_at").all()
+  const url = getSetting('relayUrl').replace(/\/$/, ''), token = getSetting('relayToken')
+  if (!url || !token) return local
+  // La fuente de verdad es el relay: aquí aparecen también los programados desde otros equipos.
+  try {
+    const jobs = (await (await fetch(`${url}/jobs`, { headers: { authorization: `Bearer ${token}` } })).json()) as
+      { id: string; sendAt: number; status: string; error?: string; meta: { to: string; subject: string; from: string } }[]
+    const remote = jobs.filter(j => j.status === 'pending' || j.status === 'sending' || j.status === 'error')
+      .map(j => ({ id: j.id, account_id: 0, payload: JSON.stringify({ to: j.meta.to, subject: j.meta.subject }), send_at: j.sendAt, status: 'relay', error: j.error }))
+    return [...local, ...remote].sort((x, y) => (x as { send_at: number }).send_at - (y as { send_at: number }).send_at)
+  } catch { return local }
+}
+export async function cancelScheduled(id: number | string): Promise<void> {
+  if (typeof id === 'string') { await cancelRelay(id); return }
   const db = getDb()
   const r = db.prepare('SELECT status, error FROM scheduled WHERE id=?').get(id) as { status: string; error: string } | undefined
   if (r?.status === 'relay') await cancelRelay(r.error)

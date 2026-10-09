@@ -48,6 +48,11 @@ MIT
 ## Sincronización con iOS y otros clientes
 Todo vive en el servidor IMAP: los envíos se copian a la carpeta *Enviados* (Gmail lo hace solo), y leído/destacado se sincronizan en ambos sentidos. Lo enviado desde el iPhone aparece también en la app.
 
+## Varios equipos
+- **Borradores:** se guardan en la carpeta *Borradores* del servidor IMAP, así que los ves en cualquier equipo y en iOS.
+- **Programados:** viven en el relay; cualquier equipo con la misma URL y token los lista y cancela.
+- **Fuera de casa:** el relay solo es accesible desde dispositivos de tu red Tailscale (funciona desde cualquier wifi/4G con Tailscale activo).
+
 ## Envío programado con el PC apagado (Relay)
 Carpeta `relay/`: servicio Node que guarda el mensaje ya construido (con credenciales cifradas AES-256-GCM, borradas tras enviar) y lo manda por SMTP a la hora indicada, copiándolo a *Enviados*. Escucha solo en `127.0.0.1` y se expone con `tailscale serve` (HTTPS privado, sin abrir puertos).
 

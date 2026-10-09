@@ -5,7 +5,7 @@ import DOMPurify from 'dompurify'
 type Msg = any
 const api = () => window.api
 
-const VIEWS = [['inbox', 'Bandeja'], ['unread', 'No leídos'], ['starred', 'Destacados'], ['sent', 'Enviados'], ['snoozed', 'Pospuestos']] as const
+const VIEWS = [['inbox', 'Bandeja'], ['unread', 'No leídos'], ['starred', 'Destacados'], ['sent', 'Enviados'], ['drafts', 'Borradores'], ['snoozed', 'Pospuestos']] as const
 
 export function App(): JSX.Element {
   const [accounts, setAccounts] = useState<any[]>([])
@@ -17,6 +17,7 @@ export function App(): JSX.Element {
   const [thread, setThread] = useState<Msg[]>([])
   const [modal, setModal] = useState<'compose' | 'account' | 'scheduled' | 'tracking' | 'settings' | null>(null)
   const [reply, setReply] = useState<Msg | null>(null)
+  const [draft, setDraft] = useState<Msg | null>(null)
 
   const load = useCallback(async () => {
     setMsgs(await api().mail.list({ account, view, query: query.trim() || undefined }))
@@ -49,7 +50,7 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <aside className="side">
-        <button className="btn primary" style={{ width: '100%' }} onClick={() => { setReply(null); setModal('compose') }}>✎ Redactar</button>
+        <button className="btn primary" style={{ width: '100%' }} onClick={() => { setReply(null); setDraft(null); setModal('compose') }}>✎ Redactar</button>
         <h4>Vistas</h4>
         {VIEWS.map(([k, l]) => <button key={k} className={'nav' + (view === k ? ' on' : '')} onClick={() => setView(k)}>{l}</button>)}
         <h4>Cuentas</h4>
@@ -80,7 +81,9 @@ export function App(): JSX.Element {
           <>
             <h2>{sel.subject}</h2>
             <div className="bar">
-              <button className="btn" onClick={() => { setReply(sel); setModal('compose') }}>Responder</button>
+              {sel.role === 'drafts'
+                ? <button className="btn primary" onClick={() => { setDraft(sel); setReply(null); setModal('compose') }}>Editar borrador</button>
+                : <button className="btn" onClick={() => { setReply(sel); setModal('compose') }}>Responder</button>}
               <button className="btn" onClick={async () => { await api().mail.flag(sel.id, 'starred', !sel.starred); void load() }}>★</button>
               <button className="btn" onClick={async () => { await api().mail.move(sel.id, 'archive'); setSel(null); void load() }}>Archivar</button>
               <button className="btn" onClick={async () => { await api().mail.move(sel.id, 'trash'); setSel(null); void load() }}>Borrar</button>
@@ -99,7 +102,7 @@ export function App(): JSX.Element {
         )}
       </main>
 
-      {modal === 'compose' && <Compose accounts={accounts} reply={reply} onClose={() => setModal(null)} />}
+      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} onClose={() => { setModal(null); void load() }} />}
       {modal === 'account' && <AddAccount onClose={() => setModal(null)} />}
       {modal === 'scheduled' && <Scheduled onClose={() => setModal(null)} />}
       {modal === 'tracking' && <Tracking onClose={() => setModal(null)} />}
@@ -114,12 +117,12 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   </div>
 }
 
-function Compose({ accounts, reply, onClose }: { accounts: any[]; reply: Msg | null; onClose: () => void }): JSX.Element {
-  const [from, setFrom] = useState(accounts[0]?.id)
-  const [to, setTo] = useState(reply?.from_addr ?? '')
+function Compose({ accounts, reply, draft, onClose }: { accounts: any[]; reply: Msg | null; draft: Msg | null; onClose: () => void }): JSX.Element {
+  const [from, setFrom] = useState(draft?.account_id ?? accounts[0]?.id)
+  const [to, setTo] = useState(draft?.to_addrs ?? reply?.from_addr ?? '')
   const [cc, setCc] = useState(''); const [bcc, setBcc] = useState('')
-  const [subject, setSubject] = useState(reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : '')
-  const [body, setBody] = useState('')
+  const [subject, setSubject] = useState<string>(draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
+  const [body, setBody] = useState<string>(draft?.text ?? '')
   const [track, setTrack] = useState(true)
   const [follow, setFollow] = useState(0)
   const [at, setAt] = useState('')
@@ -147,6 +150,7 @@ function Compose({ accounts, reply, onClose }: { accounts: any[]; reply: Msg | n
       setUndo(8)
       for (let i = 8; i > 0; i--) { setUndo(i); await new Promise(r => setTimeout(r, 1000)); if (cancelled.current) return }
       await api().send.now(from, payload())
+      if (draft) await api().mail.move(draft.id, 'trash').catch(() => {})
       onClose()
     } catch (e) { setErr(String(e)); setUndo(0) }
   }
@@ -167,6 +171,7 @@ function Compose({ accounts, reply, onClose }: { accounts: any[]; reply: Msg | n
     <input type="file" multiple onChange={e => void addFiles(e.target.files)} />
     {files.map((f, i) => <span key={i} className="pill">{f.filename}</span>)}
     {err && <div style={{ color: 'crimson' }}>{err}</div>}
+    <button className="btn" onClick={async () => { try { await api().send.draft(from, payload()); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
     {undo > 0
       ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
       : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}

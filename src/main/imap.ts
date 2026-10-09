@@ -16,7 +16,7 @@ export async function testConnection(a: Account): Promise<void> {
 }
 
 /** Sincroniza los últimos `limit` mensajes de INBOX (incremental por UID). */
-export async function syncAccount(a: Account, folder = 'INBOX', limit = 200): Promise<number> {
+export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, role = 'inbox'): Promise<number> {
   const db = getDb()
   const c = client(a)
   await c.connect()
@@ -28,8 +28,8 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200): Pr
       const total = (c.mailbox as { exists: number }).exists
       const range = last ? `${last + 1}:*` : `${Math.max(1, total - limit + 1)}:*`
       const ins = db.prepare(`INSERT OR IGNORE INTO messages
-        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred,role)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       for await (const m of c.fetch(range, { uid: true, source: true, flags: true }, { uid: true })) {
         if (last && m.uid <= last) continue
         if (!m.source) continue
@@ -42,7 +42,7 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200): Pr
           from?.name ?? '', from?.address ?? '', p.to ? [p.to].flat().map(t => t.text).join(', ') : '',
           (p.date ?? new Date()).getTime(), text.replace(/\s+/g, ' ').slice(0, 160),
           typeof p.html === 'string' ? p.html : '', text,
-          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0)
+          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0, role)
         if (r.changes) {
           added++
           db.prepare('INSERT INTO messages_fts(rowid,subject,from_addr,text) VALUES(?,?,?,?)')
@@ -58,6 +58,22 @@ async function sentFolder(c: ImapFlow): Promise<string | null> {
   const boxes = await c.list()
   return boxes.find(b => b.specialUse === '\\Sent')?.path
     ?? boxes.find(b => /^(sent|enviados|sent items|sent messages|elementos enviados)$/i.test(b.name))?.path ?? null
+}
+async function draftsFolder(c: ImapFlow): Promise<string | null> {
+  const boxes = await c.list()
+  return boxes.find(b => b.specialUse === '\\Drafts')?.path
+    ?? boxes.find(b => /^(drafts|borradores|draft)$/i.test(b.name))?.path ?? null
+}
+
+/** Guarda un borrador en la carpeta Borradores del servidor: lo ven iOS y los demás equipos. */
+export async function saveDraft(a: Account, raw: Buffer): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  try {
+    const f = await draftsFolder(c)
+    if (!f) throw new Error('El servidor no tiene carpeta Borradores')
+    await c.append(f, raw, ['\\Draft', '\\Seen'])
+  } finally { await c.logout().catch(() => {}) }
 }
 
 /** Guarda una copia en la carpeta Enviados del servidor (visible desde iOS y otros clientes). */
@@ -75,8 +91,14 @@ export async function syncAccountAll(a: Account): Promise<number> {
   const c = client(a)
   await c.connect()
   const f = await sentFolder(c).catch(() => null)
+  const d = await draftsFolder(c).catch(() => null)
   await c.logout().catch(() => {})
-  if (f) n += await syncAccount(a, f, 100)
+  if (f) n += await syncAccount(a, f, 100, 'sent').catch(() => 0)
+  if (d) {
+    // Los borradores cambian y se borran: se resincronizan por completo
+    getDb().prepare("DELETE FROM messages WHERE account_id=? AND role='drafts'").run(a.id)
+    n += await syncAccount(a, d, 50, 'drafts').catch(() => 0)
+  }
   return n
 }
 

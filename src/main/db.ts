@@ -39,6 +39,7 @@ export function getDb(): Database.Database {
     );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
   `)
+  try { db.exec("ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'inbox'"); db.exec("UPDATE messages SET role='sent' WHERE folder<>'INBOX'") } catch { /* ya migrada */ }
   return db
 }
 
