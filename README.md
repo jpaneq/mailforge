@@ -33,7 +33,7 @@ npm run dist:mac   # o dist:win
 Limitación honesta: Apple Mail Privacy Protection y Gmail precargan imágenes, así que algunas "aperturas" son falsas.
 
 ## Roadmap
-- [ ] OAuth2 Gmail/Microsoft (sin contraseñas de aplicación)
+- [x] Inicio de sesión con Google (OAuth2) · [ ] Microsoft/Outlook OAuth2
 - [x] Adjuntos, deshacer envío, archivar y borrar (sincronizado con el servidor)
 - [ ] Carpetas/etiquetas personalizadas; IDLE push en tiempo real
 - [x] Spam con detección automática
@@ -49,6 +49,12 @@ Ideas de UX tomadas de proyectos abiertos como Mailspring (GPL-3), Mail0 e Inbox
 
 ## Licencia
 MIT
+
+## Inicio de sesión con Google
+Botón «Iniciar sesión con Google» (OAuth2 con PKCE, sin contraseñas). Google exige un ID de cliente propio por aplicación: créalo una vez en Google Cloud Console (tipo *Aplicación de escritorio*, permiso `https://mail.google.com/`, aplicación publicada «En producción» para que el acceso no caduque a los 7 días) y pégalo en el diálogo de añadir cuenta. Los envíos programados del relay también funcionan con estas cuentas.
+
+## Ventana de redacción
+El redactor puede ser un diálogo, ocupar toda la app o abrirse como **ventana independiente** (movible, redimensionable, maximizable, con el texto sobre una hoja centrada). En Ajustes puedes elegir redactar siempre así.
 
 ## Sincronización con iOS y otros clientes
 Todo vive en el servidor IMAP: los envíos se copian a la carpeta *Enviados* (Gmail lo hace solo), y leído/destacado se sincronizan en ambos sentidos. Lo enviado desde el iPhone aparece también en la app.

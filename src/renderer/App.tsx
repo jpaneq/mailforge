@@ -387,9 +387,18 @@ function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, o
   </Modal>
 }
 
+function GoogleG(): JSX.Element {
+  return <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.9 2.4 30.4 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" /><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.1 5.5c4.3-4 6.8-9.9 6.8-16.9z" /><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z" /><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.1-5.5c-2 1.4-4.6 2.3-8.8 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z" /></svg>
+}
+
 function AddAccount({ onClose }: { onClose: () => void }): JSX.Element {
   const [f, setF] = useState({ email: '', name: '', password: '', imap_host: '', imap_port: 993, smtp_host: '', smtp_port: 465 })
   const [err, setErr] = useState(''); const [busy, setBusy] = useState(false)
+  const [gBusy, setGBusy] = useState(false)
+  const [setup, setSetup] = useState(false)
+  const [cid, setCid] = useState(''); const [csec, setCsec] = useState('')
+  const [manual, setManual] = useState(false)
+  useEffect(() => { void api().settings.get('googleClientId').then(setCid); void api().settings.get('googleClientSecret').then(setCsec) }, [])
   const set = (k: string, v: unknown): void => setF(p => ({ ...p, [k]: v }))
   async function email(v: string): Promise<void> {
     set('email', v)
@@ -398,18 +407,51 @@ function AddAccount({ onClose }: { onClose: () => void }): JSX.Element {
   }
   async function add(): Promise<void> {
     setBusy(true); setErr('')
-    try { await api().accounts.add({ ...f, user: f.email }); onClose() } catch (e) { setErr(String(e)) }
+    try { await api().accounts.add({ ...f, user: f.email }); onClose() } catch (e) { setErr(String(e).replace(/^Error: (Error invoking remote method '[^']+': )?(Error: )?/, '')) }
     setBusy(false)
   }
+  async function google(): Promise<void> {
+    setGBusy(true); setErr('')
+    try { await api().accounts.google(); onClose() }
+    catch (e) {
+      const msg = String(e)
+      if (msg.includes('NO_CLIENT')) setSetup(true)
+      else setErr(msg.replace(/^Error: (Error invoking remote method '[^']+': )?(Error: )?/, ''))
+    }
+    setGBusy(false)
+  }
+  async function saveClient(): Promise<void> {
+    await api().settings.set('googleClientId', cid.trim()); await api().settings.set('googleClientSecret', csec.trim())
+    setSetup(false); void google()
+  }
   return <Modal title="Añadir cuenta" onClose={onClose}>
-    <input placeholder="Correo" value={f.email} onChange={e => void email(e.target.value)} />
-    <input placeholder="Nombre" value={f.name} onChange={e => set('name', e.target.value)} />
-    <input type="password" placeholder="Contraseña / contraseña de aplicación" value={f.password} onChange={e => set('password', e.target.value)} />
-    <input placeholder="Servidor IMAP" value={f.imap_host} onChange={e => set('imap_host', e.target.value)} />
-    <input placeholder="Servidor SMTP" value={f.smtp_host} onChange={e => set('smtp_host', e.target.value)} />
-    <div className="hint">Gmail, Outlook e iCloud requieren una contraseña de aplicación. OAuth2 está en el roadmap.</div>
+    <button className="google-btn" disabled={gBusy} onClick={() => void google()}><GoogleG />{gBusy ? 'Esperando al navegador…' : 'Iniciar sesión con Google'}</button>
+    {gBusy && <div className="hint">Se ha abierto tu navegador. Elige tu cuenta de Google y acepta el acceso a tu correo.</div>}
+    {setup && <div className="setup-box">
+      <b>Configuración única de Google</b>
+      <div className="hint" style={{ marginTop: 0 }}>Google exige que cada aplicación tenga su propio ID de cliente. Se crea gratis en 5 minutos:</div>
+      <ol>
+        <li>Entra en <b>console.cloud.google.com</b> y crea un proyecto (p. ej. «MailForge»).</li>
+        <li><b>APIs y servicios → Pantalla de consentimiento OAuth</b>: tipo <i>Externo</i>, pon un nombre y tu correo. En <i>Acceso a los datos</i> añade el permiso <code>https://mail.google.com/</code>.</li>
+        <li>Pulsa <b>Publicar aplicación</b> (pasa a «En producción»). Si la dejas en «Pruebas», Google cierra tu sesión cada 7 días. Al iniciar sesión verás un aviso de «app no verificada»: <i>Avanzado → Continuar</i> (es tu propia app).</li>
+        <li><b>Credenciales → Crear credenciales → ID de cliente de OAuth</b>, tipo <b>Aplicación de escritorio</b>. Copia el ID y el secreto aquí:</li>
+      </ol>
+      <input placeholder="ID de cliente (termina en .apps.googleusercontent.com)" value={cid} onChange={e => setCid(e.target.value)} />
+      <input type="password" placeholder="Secreto del cliente" value={csec} onChange={e => setCsec(e.target.value)} />
+      <div className="actions"><button className="btn primary" disabled={!cid.trim() || !csec.trim()} onClick={() => void saveClient()}>Guardar y conectar</button></div>
+    </div>}
+    {!setup && <button className="link-btn" style={{ justifySelf: 'start' }} onClick={() => setSetup(true)}>Configurar o cambiar el ID de cliente de Google</button>}
+    <div className="or"><span>o con contraseña</span></div>
+    {!manual ? <button className="btn" onClick={() => setManual(true)}>Otro proveedor / contraseña de aplicación…</button> : <>
+      <input placeholder="Correo" value={f.email} onChange={e => void email(e.target.value)} />
+      <input placeholder="Nombre" value={f.name} onChange={e => set('name', e.target.value)} />
+      <input type="password" placeholder="Contraseña / contraseña de aplicación" value={f.password} onChange={e => set('password', e.target.value)} />
+      <input placeholder="Servidor IMAP" value={f.imap_host} onChange={e => set('imap_host', e.target.value)} />
+      <input placeholder="Servidor SMTP" value={f.smtp_host} onChange={e => set('smtp_host', e.target.value)} />
+      <div className="hint">Outlook e iCloud requieren una contraseña de aplicación. Gmail: usa mejor el botón de Google.</div>
+      <div className="actions"><button className="btn primary" disabled={busy || !f.email || !f.password} onClick={() => void add()}>{busy ? 'Conectando…' : 'Conectar'}</button></div>
+    </>}
     {err && <div style={{ color: 'var(--danger)' }}>{err}</div>}
-    <div className="actions"><button className="btn primary" disabled={busy || !f.email || !f.password} onClick={() => void add()}>{busy ? 'Conectando…' : 'Conectar'}</button></div>
   </Modal>
 }
 

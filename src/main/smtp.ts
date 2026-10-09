@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer'
-import { Account, decrypt } from './accounts'
+import { Account, decrypt, googleRefreshToken, smtpAuth } from './accounts'
+import { googleClient } from './oauth'
 import { getDb, getSetting } from './db'
 import { randomUUID } from 'crypto'
 import MailComposer from 'nodemailer/lib/mail-composer'
@@ -44,7 +45,7 @@ export async function sendMail(a: Account, m: Outgoing): Promise<void> {
   const { raw, rcpt } = await buildRaw(a, m)
   const tr = nodemailer.createTransport({
     host: a.smtp_host, port: a.smtp_port, secure: a.smtp_port === 465,
-    auth: { user: a.user, pass: decrypt(a.pass_enc) }
+    auth: await smtpAuth(a)
   })
   await tr.sendMail({ envelope: { from: a.email, to: rcpt }, raw })
   // Gmail guarda solo el enviado por SMTP; el resto necesitan que lo copiemos a "Enviados".
@@ -52,6 +53,13 @@ export async function sendMail(a: Account, m: Outgoing): Promise<void> {
 }
 
 /** Envía la tarea al relay para que salga con el PC apagado. */
+/** Credenciales para el relay: contraseña, o permiso renovable de Google (el relay pide sus propios tokens). */
+function cred(a: Account): Record<string, unknown> {
+  if (a.auth_type !== 'google') return { pass: decrypt(a.pass_enc) }
+  const g = googleClient()
+  return { oauth: { clientId: g.id, clientSecret: g.secret, refreshToken: googleRefreshToken(a) } }
+}
+
 export async function sendToRelay(a: Account, m: Outgoing, sendAt: number): Promise<string> {
   const url = getSetting('relayUrl').replace(/\/$/, ''), token = getSetting('relayToken')
   const { raw, rcpt } = await buildRaw(a, m)
@@ -59,8 +67,8 @@ export async function sendToRelay(a: Account, m: Outgoing, sendAt: number): Prom
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       sendAt, raw: raw.toString('base64'), envelope: { from: a.email, to: rcpt }, skipSent: isGmail(a),
-      smtp: { host: a.smtp_host, port: a.smtp_port, user: a.user, pass: decrypt(a.pass_enc) },
-      imap: { host: a.imap_host, port: a.imap_port, user: a.user, pass: decrypt(a.pass_enc) },
+      smtp: { host: a.smtp_host, port: a.smtp_port, user: a.user, ...cred(a) },
+      imap: { host: a.imap_host, port: a.imap_port, user: a.user, ...cred(a) },
       meta: { to: m.to, subject: m.subject, from: a.email }
     })
   })

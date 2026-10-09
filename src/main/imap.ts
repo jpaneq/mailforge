@@ -1,18 +1,18 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
-import { Account, decrypt, listAccounts } from './accounts'
+import { Account, imapAuth, listAccounts } from './accounts'
 import { getDb, getSetting } from './db'
 import { classify, train } from './spam'
 import { refreshBadge } from './badge'
 
-const client = (a: Account): ImapFlow =>
+const client = async (a: Account): Promise<ImapFlow> =>
   new ImapFlow({
     host: a.imap_host, port: a.imap_port, secure: a.imap_port === 993,
-    auth: { user: a.user, pass: decrypt(a.pass_enc) }, logger: false
+    auth: await imapAuth(a), logger: false
   })
 
 export async function testConnection(a: Account): Promise<void> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   await c.logout()
 }
@@ -20,7 +20,7 @@ export async function testConnection(a: Account): Promise<void> {
 /** Sincroniza los últimos `limit` mensajes de INBOX (incremental por UID). */
 export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, role = 'inbox'): Promise<number> {
   const db = getDb()
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   let added = 0
   const toSpam: { uid: number; id: string; reason: string }[] = []
@@ -100,7 +100,7 @@ async function draftsFolder(c: ImapFlow): Promise<string | null> {
 
 /** Guarda un borrador en la carpeta Borradores del servidor (lo ven iOS y otros equipos). Reemplaza `prevUid` si se indica. */
 export async function saveDraft(a: Account, raw: Buffer, prevUid?: number): Promise<number | null> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   try {
     const f = await draftsFolder(c)
@@ -116,7 +116,7 @@ export async function saveDraft(a: Account, raw: Buffer, prevUid?: number): Prom
 
 /** Guarda una copia en la carpeta Enviados del servidor (visible desde iOS y otros clientes). */
 export async function appendToSent(a: Account, raw: Buffer): Promise<void> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   try {
     const f = await sentFolder(c)
@@ -125,7 +125,7 @@ export async function appendToSent(a: Account, raw: Buffer): Promise<void> {
 }
 
 export async function deleteDraft(a: Account, uid: number): Promise<void> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   try {
     const f = await draftsFolder(c)
@@ -137,7 +137,7 @@ export async function deleteDraft(a: Account, uid: number): Promise<void> {
 
 export async function syncAccountAll(a: Account): Promise<number> {
   let n = await syncAccount(a)
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   const f = await sentFolder(c).catch(() => null)
   const d = await draftsFolder(c).catch(() => null)
@@ -165,7 +165,7 @@ export const syncAll = async (): Promise<number> => {
 }
 
 export async function setFlag(a: Account, folder: string, uid: number, flag: string, on: boolean): Promise<void> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   const lock = await c.getMailboxLock(folder)
   try {
@@ -190,7 +190,7 @@ async function findFolder(c: ImapFlow, kind: Kind): Promise<string | null> {
 
 /** Mueve un mensaje a Archivo, Papelera, Spam o Bandeja en el servidor. */
 export async function moveMessage(a: Account, folder: string, uid: number, target: Kind): Promise<void> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   try {
     const dest = await findFolder(c, target)
@@ -204,7 +204,7 @@ export interface AttInfo { index: number; filename: string; size: number; conten
 
 /** Descarga el mensaje del servidor y devuelve sus adjuntos (no los incrustados). */
 export async function fetchAttachments(a: Account, folder: string, uid: number): Promise<{ info: AttInfo; content: Buffer }[]> {
-  const c = client(a)
+  const c = await client(a)
   await c.connect()
   try {
     const lock = await c.getMailboxLock(folder)

@@ -37,8 +37,20 @@ let jobs = existsSync(STORE) ? JSON.parse(readFileSync(STORE, 'utf8')) : []
 const save = () => { writeFileSync(STORE + '.tmp', JSON.stringify(jobs)); renameSync(STORE + '.tmp', STORE) }
 const pub = j => ({ id: j.id, sendAt: j.sendAt, status: j.status, error: j.error, meta: j.meta, attempts: j.attempts })
 
+// Cuentas de Google: el relay renueva sus propios tokens con el permiso renovable
+async function googleAccessToken(o) {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: o.clientId, client_secret: o.clientSecret, refresh_token: o.refreshToken, grant_type: 'refresh_token' })
+  })
+  const j = await res.json()
+  if (!res.ok) throw new Error('Google: ' + (j.error_description ?? j.error ?? res.status))
+  return j.access_token
+}
+
 async function appendToSent(imap, raw) {
-  const c = new ImapFlow({ host: imap.host, port: imap.port, secure: imap.port === 993, auth: { user: imap.user, pass: imap.pass }, logger: false })
+  const auth = imap.oauth ? { user: imap.user, accessToken: await googleAccessToken(imap.oauth) } : { user: imap.user, pass: imap.pass }
+  const c = new ImapFlow({ host: imap.host, port: imap.port, secure: imap.port === 993, auth, logger: false })
   await c.connect()
   try {
     const boxes = await c.list()
@@ -50,7 +62,8 @@ async function appendToSent(imap, raw) {
 
 async function deliver(job) {
   const { smtp, imap, envelope, raw, skipSent } = open(job.blob)
-  const tr = nodemailer.createTransport({ host: smtp.host, port: smtp.port, secure: smtp.port === 465, auth: { user: smtp.user, pass: smtp.pass } })
+  const auth = smtp.oauth ? { type: 'OAuth2', user: smtp.user, accessToken: await googleAccessToken(smtp.oauth) } : { user: smtp.user, pass: smtp.pass }
+  const tr = nodemailer.createTransport({ host: smtp.host, port: smtp.port, secure: smtp.port === 465, auth })
   const buf = Buffer.from(raw, 'base64')
   await tr.sendMail({ envelope, raw: buf })
   if (imap && !skipSent) await appendToSent(imap, buf).catch(e => console.error('Enviado, pero no se pudo copiar a Enviados:', e.message))

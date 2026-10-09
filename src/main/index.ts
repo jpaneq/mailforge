@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
-import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
+import { googleSignIn } from './oauth'
+import { addAccount, addGoogleAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
 import { fetchAttachments, moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
 import { sendMail, saveDraftMail, removeDraft, Outgoing } from './smtp'
 import { refreshBadge, counts } from './badge'
@@ -36,12 +37,25 @@ type Q = { account?: number; view: string; query?: string }
 
 function registerIpc(): void {
   const db = getDb()
-  ipcMain.handle('accounts:list', () => listAccounts().map(({ pass_enc, ...a }) => a))
+  ipcMain.handle('accounts:list', () => listAccounts().map(({ pass_enc, oauth_enc, ...a }) => a))
   ipcMain.handle('accounts:presets', () => PRESETS)
   ipcMain.handle('accounts:add', async (_e, a) => {
     const id = addAccount(a)
-    try { await testConnection(getAccount(id)) } catch (e) { removeAccount(id); throw new Error('No se pudo conectar: ' + String(e)) }
+    try { await testConnection(getAccount(id)) } catch (e) {
+      removeAccount(id)
+      const gmail = /gmail|google/i.test(a.imap_host)
+      throw new Error(gmail
+        ? 'Gmail rechazó el acceso. Usa el botón «Iniciar sesión con Google», o una contraseña de aplicación de 16 letras (sin espacios; requiere verificación en dos pasos y IMAP activado). La contraseña normal de Gmail no funciona.'
+        : 'No se pudo conectar: ' + String((e as Error).message ?? e))
+    }
     void syncAccountAll(getAccount(id))
+    return id
+  })
+  ipcMain.handle('accounts:google', async () => {
+    const profile = await googleSignIn()
+    const id = addGoogleAccount(profile)
+    await testConnection(getAccount(id))
+    void syncAccountAll(getAccount(id)).then(refreshBadge)
     return id
   })
   ipcMain.handle('accounts:remove', (_e, id: number) => removeAccount(id))

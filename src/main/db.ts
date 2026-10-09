@@ -47,6 +47,7 @@ export function getDb(): Database.Database {
   `)
   try { db.exec("ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'inbox'"); db.exec("UPDATE messages SET role='sent' WHERE folder<>'INBOX'") } catch { /* ya migrada */ }
   try { db.exec('ALTER TABLE messages ADD COLUMN att INTEGER DEFAULT 0') } catch { /* ya migrada */ }
+  try { db.exec("ALTER TABLE accounts ADD COLUMN auth_type TEXT DEFAULT 'password'"); db.exec('ALTER TABLE accounts ADD COLUMN oauth_enc TEXT') } catch { /* ya migrada */ }
   // Firmas antiguas (texto plano por cuenta) → tabla de firmas
   const old = db.prepare("SELECT id, signature FROM accounts WHERE signature IS NOT NULL AND signature<>''").all() as { id: number; signature: string }[]
   for (const a of old) {
