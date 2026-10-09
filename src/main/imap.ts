@@ -1,7 +1,9 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { Account, decrypt, listAccounts } from './accounts'
-import { getDb } from './db'
+import { getDb, getSetting } from './db'
+import { classify, train } from './spam'
+import { refreshBadge } from './badge'
 
 const client = (a: Account): ImapFlow =>
   new ImapFlow({
@@ -21,6 +23,7 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
   const c = client(a)
   await c.connect()
   let added = 0
+  const toSpam: { uid: number; id: string; reason: string }[] = []
   try {
     const lock = await c.getMailboxLock(folder)
     try {
@@ -38,6 +41,15 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
         const refs = ([] as string[]).concat(p.references ?? [])
         const thread = refs[0] ?? p.inReplyTo ?? p.messageId ?? `uid-${m.uid}`
         const text = p.text ?? ''
+        const seen = m.flags?.has('\\Seen') ? 1 : 0
+        const sp = { message_id: p.messageId, subject: p.subject ?? '', from_addr: from?.address ?? '', text }
+        if (role === 'inbox' && !seen && getSetting('autoSpam', '1') !== '0') {
+          const v = classify(a.id, sp, p.headers as Map<string, unknown>)
+          if (v.spam) { toSpam.push({ uid: m.uid, id: p.messageId ?? '', reason: v.reason }) }
+        }
+        // Aprendizaje: lo que ya está en Junk es spam; lo que ya has leído en la bandeja es correo bueno
+        if (role === 'spam' && !db.prepare('SELECT 1 FROM auto_spam WHERE message_id=?').get(p.messageId ?? '')) train(sp, true)
+        else if (role === 'inbox' && seen) train(sp, false)
         const r = ins.run(a.id, folder, m.uid, p.messageId ?? null, thread, p.subject ?? '(sin asunto)',
           from?.name ?? '', from?.address ?? '', p.to ? [p.to].flat().map(t => t.text).join(', ') : '',
           (p.date ?? new Date()).getTime(), text.replace(/\s+/g, ' ').slice(0, 160),
@@ -50,6 +62,20 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
         }
       }
     } finally { lock.release() }
+    // Mover a Junk lo detectado como spam (fuera del bucle de descarga)
+    if (toSpam.length) {
+      const dest = await findFolder(c, 'spam')
+      if (dest) {
+        const l2 = await c.getMailboxLock(folder)
+        try {
+          await c.messageMove(toSpam.map(x => x.uid).join(','), dest, { uid: true })
+          for (const x of toSpam) {
+            if (x.id) db.prepare('INSERT OR REPLACE INTO auto_spam(message_id,reason) VALUES(?,?)').run(x.id, x.reason)
+            db.prepare('DELETE FROM messages WHERE account_id=? AND folder=? AND uid=?').run(a.id, folder, x.uid)
+          }
+        } finally { l2.release() }
+      }
+    }
   } finally { await c.logout().catch(() => {}) }
   return added
 }
@@ -108,6 +134,7 @@ export async function syncAccountAll(a: Account): Promise<number> {
   await c.connect()
   const f = await sentFolder(c).catch(() => null)
   const d = await draftsFolder(c).catch(() => null)
+  const j = await findFolder(c, 'spam').catch(() => null)
   await c.logout().catch(() => {})
   if (f) n += await syncAccount(a, f, 100, 'sent').catch(() => 0)
   if (d) {
@@ -115,12 +142,18 @@ export async function syncAccountAll(a: Account): Promise<number> {
     getDb().prepare("DELETE FROM messages WHERE account_id=? AND role='drafts'").run(a.id)
     n += await syncAccount(a, d, 50, 'drafts').catch(() => 0)
   }
+  if (j) {
+    // Junk también se resincroniza por completo (puede cambiar desde otros clientes)
+    getDb().prepare("DELETE FROM messages WHERE account_id=? AND role='spam'").run(a.id)
+    n += await syncAccount(a, j, 100, 'spam').catch(() => 0)
+  }
   return n
 }
 
 export const syncAll = async (): Promise<number> => {
   let n = 0
   for (const a of listAccounts()) n += await syncAccountAll(a).catch(() => 0)
+  refreshBadge()
   return n
 }
 
@@ -134,16 +167,26 @@ export async function setFlag(a: Account, folder: string, uid: number, flag: str
   } finally { lock.release(); await c.logout().catch(() => {}) }
 }
 
-/** Mueve un mensaje a Archivo o Papelera (carpetas especiales del servidor) y lo quita de la base local. */
-export async function moveMessage(a: Account, folder: string, uid: number, target: 'archive' | 'trash'): Promise<void> {
+type Kind = 'archive' | 'trash' | 'spam' | 'inbox'
+const KINDS: Record<Exclude<Kind, 'inbox'>, { use: string; name: RegExp }> = {
+  archive: { use: '\\Archive', name: /^(archive|archivo|archived)$/i },
+  trash: { use: '\\Trash', name: /^(trash|papelera|deleted items|elementos eliminados|bin)$/i },
+  spam: { use: '\\Junk', name: /^(junk|spam|junk e-?mail|correo no deseado|no deseado|bulk mail)$/i }
+}
+async function findFolder(c: ImapFlow, kind: Kind): Promise<string | null> {
+  if (kind === 'inbox') return 'INBOX'
+  const boxes = await c.list()
+  const k = KINDS[kind]
+  return boxes.find(b => b.specialUse === k.use)?.path ?? boxes.find(b => k.name.test(b.name))?.path
+    ?? (kind === 'archive' ? boxes.find(b => b.specialUse === '\\All')?.path ?? null : null) ?? null
+}
+
+/** Mueve un mensaje a Archivo, Papelera, Spam o Bandeja en el servidor. */
+export async function moveMessage(a: Account, folder: string, uid: number, target: Kind): Promise<void> {
   const c = client(a)
   await c.connect()
   try {
-    const boxes = await c.list()
-    const use = target === 'trash' ? '\\Trash' : '\\Archive'
-    const dest = boxes.find(b => b.specialUse === use)?.path
-      ?? boxes.find(b => (target === 'trash' ? /^(trash|papelera|deleted items|elementos eliminados|bin)$/i : /^(archive|archivo|archived)$/i).test(b.name))?.path
-      ?? (target === 'archive' ? boxes.find(b => b.specialUse === '\\All')?.path : undefined)
+    const dest = await findFolder(c, target)
     if (!dest) throw new Error('No se encontró la carpeta de destino en el servidor')
     const lock = await c.getMailboxLock(folder)
     try { await c.messageMove({ uid: String(uid) } as never, dest, { uid: true }) } finally { lock.release() }

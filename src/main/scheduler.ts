@@ -3,6 +3,7 @@ import { getDb, getSetting } from './db'
 import { getAccount } from './accounts'
 import { sendMail, sendToRelay, cancelRelay, Outgoing } from './smtp'
 import { syncAll } from './imap'
+import { refreshBadge } from './badge'
 
 export async function scheduleSend(accountId: number, m: Outgoing, sendAt: number): Promise<void> {
   const db = getDb()
@@ -89,6 +90,7 @@ function tick(): void {
   }
   // Snooze: reaparece en bandeja
   db.prepare('UPDATE messages SET snoozed_until=NULL, seen=0 WHERE snoozed_until IS NOT NULL AND snoozed_until<=?').run(now)
+  refreshBadge()
   // Recordatorios de seguimiento sin respuesta
   const fu = db.prepare('SELECT id,subject,to_addrs FROM tracked WHERE replied=0 AND follow_up_at IS NOT NULL AND follow_up_at<=?')
     .all(now) as { id: string; subject: string; to_addrs: string }[]

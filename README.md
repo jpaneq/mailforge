@@ -11,6 +11,8 @@ Cliente de correo de escritorio para **macOS y Windows** (Electron + React + Typ
 - **Recordatorio de seguimiento** si no hay respuesta en N días; detección de respuesta
 - **Posponer (snooze)** mensajes
 - Plantillas, firmas por cuenta, atajos (`c` redactar, `/` buscar)
+- **Spam:** carpeta Junk sincronizada, «Spam» / «No es spam» (se mueve en el servidor, también en iOS) y detección automática por capas: cabeceras del servidor, fallos de SPF/DKIM/DMARC y filtro bayesiano que aprende de lo que marcas. Muy conservador, nunca marca a quien ya tiene tu confianza o a quien has escrito
+- **Contador de no leídos** en el Dock de macOS y como insignia en la barra de tareas de Windows
 - Imágenes remotas bloqueadas al leer (anti-rastreo) y HTML saneado en iframe sandbox
 - CI que genera instaladores `.dmg` y `.exe`
 
@@ -32,6 +34,7 @@ Limitación honesta: Apple Mail Privacy Protection y Gmail precargan imágenes, 
 - [x] Adjuntos, deshacer envío, archivar y borrar (sincronizado con el servidor)
 - [ ] Editor enriquecido, descargar adjuntos recibidos
 - [ ] Carpetas/etiquetas personalizadas; IDLE push en tiempo real
+- [x] Spam con detección automática
 - [ ] Reglas y filtros, bandeja prioritaria
 - [ ] Combinar correspondencia (mail merge) y secuencias de seguimiento
 - [ ] Clasificación y resúmenes con IA, baja en bloque de newsletters, deduplicación

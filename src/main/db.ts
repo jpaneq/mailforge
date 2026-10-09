@@ -38,6 +38,10 @@ export function getDb(): Database.Database {
       id INTEGER PRIMARY KEY, name TEXT, subject TEXT, body TEXT
     );
     CREATE TABLE IF NOT EXISTS autodrafts (id TEXT PRIMARY KEY, data TEXT, updated INTEGER);
+    CREATE TABLE IF NOT EXISTS bayes (token TEXT PRIMARY KEY, spam INTEGER DEFAULT 0, ham INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS trained (message_id TEXT PRIMARY KEY, cls INTEGER);
+    CREATE TABLE IF NOT EXISTS trusted (sender TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS auto_spam (message_id TEXT PRIMARY KEY, reason TEXT);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
   `)
   try { db.exec("ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'inbox'"); db.exec("UPDATE messages SET role='sent' WHERE folder<>'INBOX'") } catch { /* ya migrada */ }
