@@ -1,0 +1,9 @@
+{
+  "name": "mailforge-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "imapflow": "^1.0.170", "nodemailer": "^6.9.16" }
+}

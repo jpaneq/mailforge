@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -82,6 +82,8 @@ export function App(): JSX.Element {
             <div className="bar">
               <button className="btn" onClick={() => { setReply(sel); setModal('compose') }}>Responder</button>
               <button className="btn" onClick={async () => { await api().mail.flag(sel.id, 'starred', !sel.starred); void load() }}>★</button>
+              <button className="btn" onClick={async () => { await api().mail.move(sel.id, 'archive'); setSel(null); void load() }}>Archivar</button>
+              <button className="btn" onClick={async () => { await api().mail.move(sel.id, 'trash'); setSel(null); void load() }}>Borrar</button>
               <button className="btn" onClick={() => void snooze(3)}>Posponer 3 h</button>
               <button className="btn" onClick={() => void snooze(24)}>Mañana</button>
               <button className="btn" onClick={() => void snooze(168)}>1 semana</button>
@@ -123,20 +125,32 @@ function Compose({ accounts, reply, onClose }: { accounts: any[]; reply: Msg | n
   const [at, setAt] = useState('')
   const [tpls, setTpls] = useState<any[]>([])
   const [err, setErr] = useState('')
+  const [files, setFiles] = useState<{ filename: string; base64: string }[]>([])
+  const [undo, setUndo] = useState(0)
   useEffect(() => { void api().templates.list().then(setTpls) }, [])
 
   const payload = () => ({
     to, cc: cc || undefined, bcc: bcc || undefined, subject,
     html: body.split('\n').map(l => DOMPurify.sanitize(l)).join('<br>'),
-    track, followUpDays: follow || undefined
+    track, followUpDays: follow || undefined, attachments: files, inReplyTo: reply?.message_id || undefined
   })
+  async function addFiles(list: FileList | null): Promise<void> {
+    const out = await Promise.all([...(list ?? [])].map(f => new Promise<{ filename: string; base64: string }>(res => {
+      const r = new FileReader(); r.onload = () => res({ filename: f.name, base64: String(r.result).split(',')[1] }); r.readAsDataURL(f)
+    })))
+    setFiles(p => [...p, ...out])
+  }
   async function send(): Promise<void> {
     try {
-      if (at) await api().send.schedule(from, payload(), new Date(at).getTime())
-      else await api().send.now(from, payload())
+      if (at) { await api().send.schedule(from, payload(), new Date(at).getTime()); onClose(); return }
+      // Deshacer envío: 8 s de margen antes de enviar de verdad
+      setUndo(8)
+      for (let i = 8; i > 0; i--) { setUndo(i); await new Promise(r => setTimeout(r, 1000)); if (cancelled.current) return }
+      await api().send.now(from, payload())
       onClose()
-    } catch (e) { setErr(String(e)) }
+    } catch (e) { setErr(String(e)); setUndo(0) }
   }
+  const cancelled = useRef(false)
   return <Modal title="Nuevo mensaje" onClose={onClose}>
     <select value={from} onChange={e => setFrom(Number(e.target.value))}>{accounts.map(a => <option key={a.id} value={a.id}>{a.email}</option>)}</select>
     <input placeholder="Para" value={to} onChange={e => setTo(e.target.value)} />
@@ -150,8 +164,12 @@ function Compose({ accounts, reply, onClose }: { accounts: any[]; reply: Msg | n
     <label><input type="checkbox" style={{ width: 'auto' }} checked={track} onChange={e => setTrack(e.target.checked)} /> Seguimiento de lectura (requiere tracker en Ajustes)</label>
     <label>Recordarme si no responden en <select value={follow} onChange={e => setFollow(Number(e.target.value))}><option value={0}>nunca</option><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option></select></label>
     <label>Programar envío: <input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label>
+    <input type="file" multiple onChange={e => void addFiles(e.target.files)} />
+    {files.map((f, i) => <span key={i} className="pill">{f.filename}</span>)}
     {err && <div style={{ color: 'crimson' }}>{err}</div>}
-    <button className="btn primary" disabled={!to || !from} onClick={() => void send()}>{at ? 'Programar' : 'Enviar'}</button>
+    {undo > 0
+      ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
+      : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}
   </Modal>
 }
 
@@ -186,11 +204,11 @@ function Scheduled({ onClose }: { onClose: () => void }): JSX.Element {
   const load = (): void => { void api().send.list().then(setRows) }
   useEffect(load, [])
   return <Modal title="Envíos programados" onClose={onClose}>
-    <small>La app debe estar abierta a la hora de envío.</small>
+    <small>Con el relay configurado (Ajustes) se envía aunque el equipo esté apagado; sin él, la app debe estar abierta.</small>
     {rows.length === 0 ? <div className="empty">Nada programado</div> : <table><tbody>{rows.map(r => {
       const p = JSON.parse(r.payload)
-      return <tr key={r.id}><td>{new Date(r.send_at).toLocaleString()}</td><td>{p.to}<br />{p.subject}</td><td>{r.status}</td>
-        <td>{r.status === 'pending' && <button className="btn" onClick={() => void api().send.cancel(r.id).then(load)}>Cancelar</button>}</td></tr>
+      return <tr key={r.id}><td>{new Date(r.send_at).toLocaleString()}</td><td>{p.to}<br />{p.subject}</td><td>{r.status === 'relay' ? 'En el relay ✓' : r.status}</td>
+        <td>{(r.status === 'pending' || r.status === 'relay') && <button className="btn" onClick={() => void api().send.cancel(r.id).then(load)}>Cancelar</button>}</td></tr>
     })}</tbody></table>}
   </Modal>
 }
@@ -209,16 +227,25 @@ function Tracking({ onClose }: { onClose: () => void }): JSX.Element {
 
 function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void }): JSX.Element {
   const [url, setUrl] = useState(''); const [key, setKey] = useState('')
+  const [relay, setRelay] = useState({ url: '', token: '' }); const [relayMsg, setRelayMsg] = useState('')
   const [tpl, setTpl] = useState({ name: '', subject: '', body: '' })
   const [tpls, setTpls] = useState<any[]>([])
   const [sigs, setSigs] = useState<Record<number, string>>({})
   const loadT = (): void => { void api().templates.list().then(setTpls) }
-  useEffect(() => { void api().settings.get('trackerUrl').then(setUrl); void api().settings.get('trackerKey').then(setKey); loadT() }, [])
+  useEffect(() => { void api().settings.get('trackerUrl').then(setUrl); void api().settings.get('trackerKey').then(setKey); loadT()
+    void Promise.all([api().settings.get('relayUrl'), api().settings.get('relayToken')]).then(([u, t]) => setRelay({ url: u, token: t })) }, [])
   return <Modal title="Ajustes" onClose={onClose}>
     <b>Servidor de seguimiento</b>
     <input placeholder="https://mi-tracker.workers.dev" value={url} onChange={e => setUrl(e.target.value)} />
     <input placeholder="Clave (opcional)" value={key} onChange={e => setKey(e.target.value)} />
     <button className="btn" onClick={() => { void api().settings.set('trackerUrl', url); void api().settings.set('trackerKey', key) }}>Guardar tracker</button>
+    <b>Relay de envíos programados (PC apagado)</b>
+    <input placeholder="https://mi-pc.tu-tailnet.ts.net" value={relay.url} onChange={e => setRelay({ ...relay, url: e.target.value })} />
+    <input type="password" placeholder="Token del relay" value={relay.token} onChange={e => setRelay({ ...relay, token: e.target.value })} />
+    <button className="btn" onClick={async () => {
+      await api().settings.set('relayUrl', relay.url); await api().settings.set('relayToken', relay.token)
+      try { const r = await fetch(relay.url.replace(/\/$/, '') + '/health'); setRelayMsg(r.ok ? '✓ Relay conectado' : 'Respuesta ' + r.status) } catch { setRelayMsg('✗ No se pudo conectar') }
+    }}>Guardar y probar</button> <small>{relayMsg}</small>
     <b>Firmas</b>
     {accounts.map(a => <div key={a.id}><small>{a.email}</small>
       <textarea rows={2} defaultValue={a.signature} onChange={e => setSigs(s => ({ ...s, [a.id]: e.target.value }))} />

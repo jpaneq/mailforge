@@ -29,12 +29,14 @@ Limitación honesta: Apple Mail Privacy Protection y Gmail precargan imágenes, 
 
 ## Roadmap
 - [ ] OAuth2 Gmail/Microsoft (sin contraseñas de aplicación)
-- [ ] Editor enriquecido, adjuntos, deshacer envío
-- [ ] Carpetas/etiquetas, archivar, borrar, mover; IDLE push en tiempo real
+- [x] Adjuntos, deshacer envío, archivar y borrar (sincronizado con el servidor)
+- [ ] Editor enriquecido, descargar adjuntos recibidos
+- [ ] Carpetas/etiquetas personalizadas; IDLE push en tiempo real
 - [ ] Reglas y filtros, bandeja prioritaria
 - [ ] Combinar correspondencia (mail merge) y secuencias de seguimiento
 - [ ] Clasificación y resúmenes con IA, baja en bloque de newsletters, deduplicación
-- [ ] Envío programado con el PC apagado (relay propio, ver abajo), firma/cifrado PGP, calendario
+- [x] Envío programado con el PC apagado (relay)
+- [ ] Firma/cifrado PGP, calendario
 - [ ] Autoactualización, firma de código
 
 ## Inspiración
@@ -46,5 +48,17 @@ MIT
 ## Sincronización con iOS y otros clientes
 Todo vive en el servidor IMAP: los envíos se copian a la carpeta *Enviados* (Gmail lo hace solo), y leído/destacado se sincronizan en ambos sentidos. Lo enviado desde el iPhone aparece también en la app.
 
-## Envío programado con el PC apagado (pendiente)
-Ahora la cola es local: la app debe estar abierta. Para que funcione apagado hace falta un servidor siempre encendido (un cliente de escritorio no puede enviar solo). Opciones evaluadas: relay propio (Docker en VPS/Raspberry/Fly.io) que guarda el mensaje cifrado y lo envía por SMTP a la hora; o el envío diferido nativo de Microsoft 365/Outlook (Graph). Gmail no ofrece API de envío programado.
+## Envío programado con el PC apagado (Relay)
+Carpeta `relay/`: servicio Node que guarda el mensaje ya construido (con credenciales cifradas AES-256-GCM, borradas tras enviar) y lo manda por SMTP a la hora indicada, copiándolo a *Enviados*. Escucha solo en `127.0.0.1` y se expone con `tailscale serve` (HTTPS privado, sin abrir puertos).
+
+**Instalación en Windows** (PowerShell como administrador):
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install Tailscale.Tailscale     # inicia sesión en Tailscale
+git clone https://github.com/jpaneq/mailforge.git
+cd mailforge\relay
+.\install-windows.ps1                  # instala, crea el token y arranca con el equipo
+tailscale serve --bg 8787              # publica https://<pc>.<tailnet>.ts.net
+```
+Después, en la app: Ajustes → Relay → pega la URL y el token. Instala Tailscale también en el Mac/iPhone. Desactiva la suspensión del PC servidor.
+

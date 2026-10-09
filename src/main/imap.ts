@@ -95,3 +95,19 @@ export async function setFlag(a: Account, folder: string, uid: number, flag: str
     else await c.messageFlagsRemove({ uid: String(uid) }, [flag], { uid: true })
   } finally { lock.release(); await c.logout().catch(() => {}) }
 }
+
+/** Mueve un mensaje a Archivo o Papelera (carpetas especiales del servidor) y lo quita de la base local. */
+export async function moveMessage(a: Account, folder: string, uid: number, target: 'archive' | 'trash'): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  try {
+    const boxes = await c.list()
+    const use = target === 'trash' ? '\\Trash' : '\\Archive'
+    const dest = boxes.find(b => b.specialUse === use)?.path
+      ?? boxes.find(b => (target === 'trash' ? /^(trash|papelera|deleted items|elementos eliminados|bin)$/i : /^(archive|archivo|archived)$/i).test(b.name))?.path
+      ?? (target === 'archive' ? boxes.find(b => b.specialUse === '\\All')?.path : undefined)
+    if (!dest) throw new Error('No se encontró la carpeta de destino en el servidor')
+    const lock = await c.getMailboxLock(folder)
+    try { await c.messageMove({ uid: String(uid) } as never, dest, { uid: true }) } finally { lock.release() }
+  } finally { await c.logout().catch(() => {}) }
+}

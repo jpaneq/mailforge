@@ -3,3 +3,6 @@ out
 dist
 *.log
 .DS_Store
+relay/relay.config.json
+relay/jobs.json
+relay/jobs.json.tmp

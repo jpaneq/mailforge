@@ -1,17 +1,45 @@
 import { Notification } from 'electron'
 import { getDb, getSetting } from './db'
 import { getAccount } from './accounts'
-import { sendMail, Outgoing } from './smtp'
+import { sendMail, sendToRelay, cancelRelay, Outgoing } from './smtp'
 import { syncAll } from './imap'
 
-export function scheduleSend(accountId: number, m: Outgoing, sendAt: number): void {
-  getDb().prepare('INSERT INTO scheduled(account_id,payload,send_at) VALUES(?,?,?)')
-    .run(accountId, JSON.stringify(m), sendAt)
+export async function scheduleSend(accountId: number, m: Outgoing, sendAt: number): Promise<void> {
+  const db = getDb()
+  if (getSetting('relayUrl') && getSetting('relayToken')) {
+    // Con relay: sale aunque este equipo esté apagado. Guardamos solo el resumen (sin adjuntos).
+    const jobId = await sendToRelay(getAccount(accountId), m, sendAt)
+    const { attachments: _a, ...light } = m
+    db.prepare("INSERT INTO scheduled(account_id,payload,send_at,status,error) VALUES(?,?,?,'relay',?)")
+      .run(accountId, JSON.stringify(light), sendAt, jobId)
+    return
+  }
+  db.prepare('INSERT INTO scheduled(account_id,payload,send_at) VALUES(?,?,?)').run(accountId, JSON.stringify(m), sendAt)
 }
 export const listScheduled = (): unknown[] =>
-  getDb().prepare("SELECT id,account_id,payload,send_at,status,error FROM scheduled WHERE status!='sent' ORDER BY send_at").all()
-export const cancelScheduled = (id: number): void => {
-  getDb().prepare("UPDATE scheduled SET status='cancelled' WHERE id=? AND status='pending'").run(id)
+  getDb().prepare("SELECT id,account_id,payload,send_at,status,error FROM scheduled WHERE status NOT IN ('sent','cancelled') ORDER BY send_at").all()
+export async function cancelScheduled(id: number): Promise<void> {
+  const db = getDb()
+  const r = db.prepare('SELECT status, error FROM scheduled WHERE id=?').get(id) as { status: string; error: string } | undefined
+  if (r?.status === 'relay') await cancelRelay(r.error)
+  db.prepare("UPDATE scheduled SET status='cancelled' WHERE id=? AND status IN ('pending','relay')").run(id)
+}
+
+/** Actualiza el estado de los envíos delegados al relay. */
+async function pollRelay(): Promise<void> {
+  const url = getSetting('relayUrl').replace(/\/$/, ''), token = getSetting('relayToken')
+  const db = getDb()
+  const rows = db.prepare("SELECT id, error AS job FROM scheduled WHERE status='relay'").all() as { id: number; job: string }[]
+  if (!url || !rows.length) return
+  try {
+    const list = (await (await fetch(`${url}/jobs`, { headers: { authorization: `Bearer ${token}` } })).json()) as
+      { id: string; status: string; error?: string }[]
+    for (const r of rows) {
+      const j = list.find(x => x.id === r.job)
+      if (j?.status === 'sent') db.prepare("UPDATE scheduled SET status='sent' WHERE id=?").run(r.id)
+      else if (j?.status === 'error') db.prepare("UPDATE scheduled SET status='error', error=? WHERE id=?").run(j.error ?? 'error', r.id)
+    }
+  } catch { /* relay no accesible: se reintenta */ }
 }
 
 async function pollTracker(): Promise<void> {
@@ -63,7 +91,7 @@ function tick(): void {
 
 export function startBackground(): void {
   setInterval(tick, 15_000)
-  setInterval(() => { void pollTracker() }, 60_000)
+  setInterval(() => { void pollTracker(); void pollRelay() }, 60_000)
   setInterval(() => { void syncAll() }, 120_000)
   tick()
 }

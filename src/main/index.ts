@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
-import { setFlag, syncAccountAll, syncAll, testConnection } from './imap'
+import { moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
 import { sendMail, Outgoing } from './smtp'
 import { cancelScheduled, listScheduled, scheduleSend, startBackground } from './scheduler'
 
@@ -47,7 +47,7 @@ function registerIpc(): void {
       from = 'messages m JOIN messages_fts f ON f.rowid=m.id'
       where.push('messages_fts MATCH ?'); args.push(q.query.replace(/["']/g, ' ') + '*')
     }
-    return db.prepare(`SELECT m.id,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
+    return db.prepare(`SELECT m.id,m.message_id,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
       FROM ${from} WHERE ${where.join(' AND ')} ORDER BY m.date DESC LIMIT 500`).all(...args)
   })
   ipcMain.handle('mail:thread', (_e, threadId: string) =>
@@ -57,6 +57,11 @@ function registerIpc(): void {
     const m = db.prepare('SELECT * FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
     db.prepare(`UPDATE messages SET ${flag}=? WHERE id=?`).run(on ? 1 : 0, id)
     await setFlag(getAccount(m.account_id), m.folder, m.uid, flag === 'seen' ? '\\Seen' : '\\Flagged', on).catch(() => {})
+  })
+  ipcMain.handle('mail:move', async (_e, id: number, target: 'archive' | 'trash') => {
+    const m = db.prepare('SELECT * FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
+    await moveMessage(getAccount(m.account_id), m.folder, m.uid, target)
+    db.prepare('DELETE FROM messages WHERE id=?').run(id)
   })
   ipcMain.handle('mail:snooze', (_e, id: number, until: number | null) =>
     db.prepare('UPDATE messages SET snoozed_until=? WHERE id=?').run(until, id))
