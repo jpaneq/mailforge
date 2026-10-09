@@ -65,14 +65,19 @@ async function draftsFolder(c: ImapFlow): Promise<string | null> {
     ?? boxes.find(b => /^(drafts|borradores|draft)$/i.test(b.name))?.path ?? null
 }
 
-/** Guarda un borrador en la carpeta Borradores del servidor: lo ven iOS y los demás equipos. */
-export async function saveDraft(a: Account, raw: Buffer): Promise<void> {
+/** Guarda un borrador en la carpeta Borradores del servidor (lo ven iOS y otros equipos). Reemplaza `prevUid` si se indica. */
+export async function saveDraft(a: Account, raw: Buffer, prevUid?: number): Promise<number | null> {
   const c = client(a)
   await c.connect()
   try {
     const f = await draftsFolder(c)
     if (!f) throw new Error('El servidor no tiene carpeta Borradores')
-    await c.append(f, raw, ['\\Draft', '\\Seen'])
+    const res = (await c.append(f, raw, ['\\Draft', '\\Seen'])) as { uid?: number } | false
+    if (prevUid) {
+      const lock = await c.getMailboxLock(f)
+      try { await c.messageDelete({ uid: String(prevUid) } as never, { uid: true }) } finally { lock.release() }
+    }
+    return res && res.uid ? res.uid : null
   } finally { await c.logout().catch(() => {}) }
 }
 
@@ -83,6 +88,17 @@ export async function appendToSent(a: Account, raw: Buffer): Promise<void> {
   try {
     const f = await sentFolder(c)
     if (f) await c.append(f, raw, ['\\Seen'])
+  } finally { await c.logout().catch(() => {}) }
+}
+
+export async function deleteDraft(a: Account, uid: number): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  try {
+    const f = await draftsFolder(c)
+    if (!f) return
+    const lock = await c.getMailboxLock(f)
+    try { await c.messageDelete({ uid: String(uid) } as never, { uid: true }) } finally { lock.release() }
   } finally { await c.logout().catch(() => {}) }
 }
 

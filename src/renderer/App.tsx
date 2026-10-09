@@ -18,6 +18,9 @@ export function App(): JSX.Element {
   const [modal, setModal] = useState<'compose' | 'account' | 'scheduled' | 'tracking' | 'settings' | null>(null)
   const [reply, setReply] = useState<Msg | null>(null)
   const [draft, setDraft] = useState<Msg | null>(null)
+  const [recover, setRecover] = useState<any[]>([])
+  const [recovering, setRecovering] = useState<any | null>(null)
+  useEffect(() => { void api().autodraft.list().then(setRecover) }, [modal])
 
   const load = useCallback(async () => {
     setMsgs(await api().mail.list({ account, view, query: query.trim() || undefined }))
@@ -50,7 +53,8 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <aside className="side">
-        <button className="btn primary" style={{ width: '100%' }} onClick={() => { setReply(null); setDraft(null); setModal('compose') }}>✎ Redactar</button>
+        <button className="btn primary" style={{ width: '100%' }} onClick={() => { setReply(null); setDraft(null); setRecovering(null); setModal('compose') }}>✎ Redactar</button>
+        {recover.length > 0 && <button className="nav" style={{ color: 'var(--accent)' }} onClick={() => { setRecovering(recover[0]); setDraft(null); setReply(null); setModal('compose') }}>↺ Recuperar borrador sin enviar ({recover.length})</button>}
         <h4>Vistas</h4>
         {VIEWS.map(([k, l]) => <button key={k} className={'nav' + (view === k ? ' on' : '')} onClick={() => setView(k)}>{l}</button>)}
         <h4>Cuentas</h4>
@@ -102,7 +106,7 @@ export function App(): JSX.Element {
         )}
       </main>
 
-      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} onClose={() => { setModal(null); void load() }} />}
+      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} recovering={recovering} onClose={() => { setModal(null); void load() }} />}
       {modal === 'account' && <AddAccount onClose={() => setModal(null)} />}
       {modal === 'scheduled' && <Scheduled onClose={() => setModal(null)} />}
       {modal === 'tracking' && <Tracking onClose={() => setModal(null)} />}
@@ -117,12 +121,15 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   </div>
 }
 
-function Compose({ accounts, reply, draft, onClose }: { accounts: any[]; reply: Msg | null; draft: Msg | null; onClose: () => void }): JSX.Element {
-  const [from, setFrom] = useState(draft?.account_id ?? accounts[0]?.id)
-  const [to, setTo] = useState(draft?.to_addrs ?? reply?.from_addr ?? '')
-  const [cc, setCc] = useState(''); const [bcc, setBcc] = useState('')
-  const [subject, setSubject] = useState<string>(draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
-  const [body, setBody] = useState<string>(draft?.text ?? '')
+function Compose({ accounts, reply, draft, recovering, onClose }: { accounts: any[]; reply: Msg | null; draft: Msg | null; recovering: any | null; onClose: () => void }): JSX.Element {
+  const rec = recovering ? JSON.parse(recovering.data) : null
+  const draftId = useRef<string>(recovering?.id ?? crypto.randomUUID())
+  const serverUid = useRef<number | undefined>(draft?.uid)
+  const [from, setFrom] = useState(rec?.from ?? draft?.account_id ?? accounts[0]?.id)
+  const [to, setTo] = useState(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? '')
+  const [cc, setCc] = useState(rec?.cc ?? ''); const [bcc, setBcc] = useState(rec?.bcc ?? '')
+  const [subject, setSubject] = useState<string>(rec?.subject ?? draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
+  const [body, setBody] = useState<string>(rec?.body ?? draft?.text ?? '')
   const [track, setTrack] = useState(true)
   const [follow, setFollow] = useState(0)
   const [at, setAt] = useState('')
@@ -145,17 +152,43 @@ function Compose({ accounts, reply, draft, onClose }: { accounts: any[]; reply: 
   }
   async function send(): Promise<void> {
     try {
-      if (at) { await api().send.schedule(from, payload(), new Date(at).getTime()); onClose(); return }
+      if (at) { await api().send.schedule(from, payload(), new Date(at).getTime()); await discardAuto(); onClose(); return }
       // Deshacer envío: 8 s de margen antes de enviar de verdad
       setUndo(8)
       for (let i = 8; i > 0; i--) { setUndo(i); await new Promise(r => setTimeout(r, 1000)); if (cancelled.current) return }
       await api().send.now(from, payload())
-      if (draft) await api().mail.move(draft.id, 'trash').catch(() => {})
+      await discardAuto()
       onClose()
     } catch (e) { setErr(String(e)); setUndo(0) }
   }
   const cancelled = useRef(false)
+
+  // Autoguardado: local a los 1,5 s de dejar de teclear; servidor cada 20 s si hubo cambios.
+  const dirty = useRef(false)
+  const latest = useRef({ from, to, cc, bcc, subject, body })
+  latest.current = { from, to, cc, bcc, subject, body }
+  const hasContent = !!(to || subject || body.trim())
+  useEffect(() => {
+    if (!hasContent) return
+    dirty.current = true
+    const t = setTimeout(() => { void api().autodraft.save(draftId.current, JSON.stringify(latest.current)) }, 1500)
+    return () => clearTimeout(t)
+  }, [from, to, cc, bcc, subject, body, hasContent])
+  useEffect(() => {
+    const t = setInterval(async () => {
+      if (!dirty.current || !from) return
+      dirty.current = false
+      try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current } catch { dirty.current = true }
+    }, 20000)
+    return () => clearInterval(t)
+  })
+  async function discardAuto(): Promise<void> {
+    await api().autodraft.delete(draftId.current)
+    if (serverUid.current && from) await api().send.draftDelete(from, serverUid.current).catch(() => {})
+  }
   return <Modal title="Nuevo mensaje" onClose={onClose}>
+    <small style={{ color: 'var(--muted)' }}>Se guarda automáticamente. Si cierras sin enviar, podrás recuperarlo.</small>
+    {(draft || rec || hasContent) && <button className="btn" style={{ justifySelf: 'start' }} onClick={() => void discardAuto().then(onClose)}>Descartar borrador</button>}
     <select value={from} onChange={e => setFrom(Number(e.target.value))}>{accounts.map(a => <option key={a.id} value={a.id}>{a.email}</option>)}</select>
     <input placeholder="Para" value={to} onChange={e => setTo(e.target.value)} />
     <input placeholder="Cc" value={cc} onChange={e => setCc(e.target.value)} />
@@ -171,7 +204,7 @@ function Compose({ accounts, reply, draft, onClose }: { accounts: any[]; reply: 
     <input type="file" multiple onChange={e => void addFiles(e.target.files)} />
     {files.map((f, i) => <span key={i} className="pill">{f.filename}</span>)}
     {err && <div style={{ color: 'crimson' }}>{err}</div>}
-    <button className="btn" onClick={async () => { try { await api().send.draft(from, payload()); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
+    <button className="btn" onClick={async () => { try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current; await api().autodraft.delete(draftId.current); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
     {undo > 0
       ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
       : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}

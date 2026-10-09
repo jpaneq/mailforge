@@ -3,7 +3,7 @@ import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
 import { moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
-import { sendMail, saveDraftMail, Outgoing } from './smtp'
+import { sendMail, saveDraftMail, removeDraft, Outgoing } from './smtp'
 import { cancelScheduled, listScheduled, scheduleSend, startBackground } from './scheduler'
 
 function createWindow(): void {
@@ -69,7 +69,12 @@ function registerIpc(): void {
   ipcMain.handle('send:now', (_e, accountId: number, m: Outgoing) => sendMail(getAccount(accountId), m))
   ipcMain.handle('send:schedule', (_e, accountId: number, m: Outgoing, at: number) => scheduleSend(accountId, m, at))
   ipcMain.handle('send:list', () => listScheduled())
-  ipcMain.handle('send:draft', (_e, accountId: number, m: Outgoing) => saveDraftMail(getAccount(accountId), m))
+  ipcMain.handle('send:draft', (_e, accountId: number, m: Outgoing, prevUid?: number) => saveDraftMail(getAccount(accountId), m, prevUid))
+  ipcMain.handle('send:draftDelete', (_e, accountId: number, uid: number) => removeDraft(getAccount(accountId), uid))
+  ipcMain.handle('autodraft:save', (_e, id: string, data: string) =>
+    db.prepare('INSERT INTO autodrafts(id,data,updated) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated=excluded.updated').run(id, data, Date.now()))
+  ipcMain.handle('autodraft:list', () => db.prepare('SELECT id,data,updated FROM autodrafts ORDER BY updated DESC').all())
+  ipcMain.handle('autodraft:delete', (_e, id: string) => db.prepare('DELETE FROM autodrafts WHERE id=?').run(id))
   ipcMain.handle('send:cancel', (_e, id: number) => cancelScheduled(id))
 
   ipcMain.handle('tracked:list', () => db.prepare('SELECT * FROM tracked ORDER BY sent_at DESC LIMIT 200').all())

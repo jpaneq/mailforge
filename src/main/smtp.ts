@@ -3,7 +3,7 @@ import { Account, decrypt } from './accounts'
 import { getDb, getSetting } from './db'
 import { randomUUID } from 'crypto'
 import MailComposer from 'nodemailer/lib/mail-composer'
-import { appendToSent, saveDraft } from './imap'
+import { appendToSent, saveDraft, deleteDraft } from './imap'
 
 export interface Outgoing {
   to: string; cc?: string; bcc?: string; subject: string; html: string
@@ -66,7 +66,8 @@ export async function cancelRelay(jobId: string): Promise<void> {
   if (!res.ok) throw new Error(`Relay: ${res.status} ${await res.text()}`)
 }
 
-export async function saveDraftMail(a: Account, m: Outgoing): Promise<void> {
+export async function saveDraftMail(a: Account, m: Outgoing, prevUid?: number): Promise<number | null> {
   const { raw } = await buildRaw(a, { ...m, track: false })
-  await saveDraft(a, raw)
+  return saveDraft(a, raw, prevUid)
 }
+export const removeDraft = deleteDraft
