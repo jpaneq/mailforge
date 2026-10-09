@@ -50,9 +50,10 @@ export interface RichEditorProps {
   onChange?: (html: string, text: string) => void
   onReady?: (ed: Editor) => void
   onAttachFiles?: (files: File[]) => void
+  fill?: boolean
 }
 
-export function RichEditor({ initialHtml, placeholder, minHeight = 260, onChange, onReady, onAttachFiles }: RichEditorProps): JSX.Element {
+export function RichEditor({ initialHtml, placeholder, minHeight = 260, onChange, onReady, onAttachFiles, fill }: RichEditorProps): JSX.Element {
   const [menu, setMenu] = useState<'color' | 'hl' | 'table' | 'link' | null>(null)
   const [link, setLink] = useState('')
   const [annot, setAnnot] = useState<{ src: string; pos: number } | null>(null)
@@ -118,7 +119,7 @@ export function RichEditor({ initialHtml, placeholder, minHeight = 260, onChange
   const setImgWidth = (w: string | null): void => { c().updateAttributes('image', { width: w }).run() }
 
   return (
-    <div className="editor-wrap">
+    <div className={'editor-wrap' + (fill ? ' fill' : '')}>
       <div className="etoolbar" onMouseDown={e => { if ((e.target as HTMLElement).tagName !== 'SELECT' && (e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault() }}>
         <Btn ic="undo" label="Deshacer" onClick={() => c().undo().run()} disabled={!editor.can().undo()} />
         <Btn ic="redo" label="Rehacer" onClick={() => c().redo().run()} disabled={!editor.can().redo()} />

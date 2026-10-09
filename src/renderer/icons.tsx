@@ -48,7 +48,10 @@ export const PATHS: Record<string, string> = {
   minus: 'M5 12h14',
   clearfmt: 'M4 7V4h16v3 M5 20h6 M13 4 8 20 M15 15l5 5 M20 15l-5 5',
   download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
-  check: 'M20 6 9 17l-5-5'
+  check: 'M20 6 9 17l-5-5',
+  expand: 'M15 3h6v6 M9 21H3v-6 M21 3l-7 7 M3 21l7-7',
+  shrink: 'M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7',
+  external: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14 21 3'
 }
 export function Icon({ n }: { n: string }): JSX.Element {
   return <svg className="ic" viewBox="0 0 24 24" aria-hidden>{PATHS[n].split(/ (?=M)/).map((d, i) => <path key={i} d={d} />)}</svg>

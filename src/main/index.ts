@@ -9,6 +9,18 @@ import { refreshBadge, counts } from './badge'
 import { train, trust } from './spam'
 import { cancelScheduled, listScheduled, scheduleSend, startBackground } from './scheduler'
 
+function createComposeWindow(params: Record<string, unknown>): void {
+  const win = new BrowserWindow({
+    width: 1000, height: 800, minWidth: 720, minHeight: 520, title: 'Nuevo mensaje', show: false,
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, spellcheck: true }
+  })
+  win.once('ready-to-show', () => win.show())
+  win.webContents.setWindowOpenHandler(({ url }) => { void shell.openExternal(url); return { action: 'deny' } })
+  const hash = 'compose=' + encodeURIComponent(JSON.stringify(params))
+  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL + '#' + hash)
+  else void win.loadFile(join(__dirname, '../renderer/index.html'), { hash })
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280, height: 820, minWidth: 900, minHeight: 600,
@@ -107,6 +119,9 @@ function registerIpc(): void {
     db.prepare('DELETE FROM messages WHERE id=?').run(id)
     refreshBadge(); void syncAccountAll(getAccount(m.account_id)).then(refreshBadge)
   })
+  ipcMain.handle('compose:open', (_e, params: Record<string, unknown>) => createComposeWindow(params ?? {}))
+  ipcMain.handle('mail:get', (_e, id: number) => db.prepare('SELECT * FROM messages WHERE id=?').get(id))
+  ipcMain.handle('autodraft:get', (_e, id: string) => db.prepare('SELECT id,data,updated FROM autodrafts WHERE id=?').get(id))
   ipcMain.handle('mail:counts', () => counts())
   ipcMain.handle('mail:snooze', (_e, id: number, until: number | null) =>
     { db.prepare('UPDATE messages SET snoozed_until=? WHERE id=?').run(until, id); refreshBadge() })

@@ -48,6 +48,8 @@ export function App(): JSX.Element {
   const [draft, setDraft] = useState<Msg | null>(null)
   const [recover, setRecover] = useState<any[]>([])
   const [recovering, setRecovering] = useState<any | null>(null)
+  const [inWindow, setInWindow] = useState(false)
+  useEffect(() => { void api().settings.get('composeInWindow').then((v: string) => setInWindow(v === '1')) }, [modal])
   useEffect(() => { void api().autodraft.list().then(setRecover) }, [modal])
 
   const load = useCallback(async () => {
@@ -68,7 +70,10 @@ export function App(): JSX.Element {
   }
   const act = async (fn: () => Promise<unknown>): Promise<void> => { await fn(); setSel(null); void load() }
   const snooze = (hours: number): Promise<void> => act(() => api().mail.snooze(sel!.id, Date.now() + hours * 3600e3))
-  const newMail = (): void => { setReply(null); setDraft(null); setRecovering(null); setModal('compose') }
+  const openCompose = (p: { replyId?: number; draftId?: number; recoverId?: string }, fallback: () => void): void => {
+    if (inWindow) void api().compose.open(p); else fallback()
+  }
+  const newMail = (): void => openCompose({}, () => { setReply(null); setDraft(null); setRecovering(null); setModal('compose') })
 
   // Atajos: c redactar, / buscar
   useEffect(() => {
@@ -90,7 +95,7 @@ export function App(): JSX.Element {
       <aside className="side">
         <div className="brand"><i><Icon n="mail" /></i>MailForge</div>
         <button className="compose-btn" onClick={newMail}><Icon n="pen" />Redactar</button>
-        {recover.length > 0 && <button className="recover" onClick={() => { setRecovering(recover[0]); setDraft(null); setReply(null); setModal('compose') }}><Icon n="refresh" />Recuperar borrador sin enviar ({recover.length})</button>}
+        {recover.length > 0 && <button className="recover" onClick={() => openCompose({ recoverId: recover[0].id }, () => { setRecovering(recover[0]); setDraft(null); setReply(null); setModal('compose') })}><Icon n="refresh" />Recuperar borrador sin enviar ({recover.length})</button>}
         {VIEWS.map(([k, l, ic]) => (
           <button key={k} className={'nav' + (view === k ? ' on' : '')} onClick={() => { setView(k); setSel(null) }}>
             <Icon n={ic} /><span className="lbl">{l}</span>{badge(k)}
@@ -142,8 +147,8 @@ export function App(): JSX.Element {
               <h1>{sel.subject}</h1>
               <div className="toolbar">
                 {sel.role === 'drafts'
-                  ? <button className="tb primary" onClick={() => { setDraft(sel); setReply(null); setRecovering(null); setModal('compose') }}><Icon n="pen" />Editar borrador</button>
-                  : <button className="tb primary" onClick={() => { setReply(sel); setDraft(null); setRecovering(null); setModal('compose') }}><Icon n="reply" />Responder</button>}
+                  ? <button className="tb primary" onClick={() => openCompose({ draftId: sel.id }, () => { setDraft(sel); setReply(null); setRecovering(null); setModal('compose') })}><Icon n="pen" />Editar borrador</button>
+                  : <button className="tb primary" onClick={() => openCompose({ replyId: sel.id }, () => { setReply(sel); setDraft(null); setRecovering(null); setModal('compose') })}><Icon n="reply" />Responder</button>}
                 <button className="tb" onClick={async () => { await api().mail.flag(sel.id, 'starred', !sel.starred); setSel({ ...sel, starred: sel.starred ? 0 : 1 }); void load() }}><Icon n="star" />{sel.starred ? 'Quitar' : 'Destacar'}</button>
                 <span className="sep" />
                 <button className="tb" onClick={() => void act(() => api().mail.move(sel.id, 'archive'))}><Icon n="archive" />Archivar</button>
@@ -173,7 +178,7 @@ export function App(): JSX.Element {
         </div>
       </main>
 
-      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} recovering={recovering} onClose={() => { setModal(null); void load() }} />}
+      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} recovering={recovering} onClose={() => { setModal(null); void load() }} onPopOut={id => void api().compose.open({ recoverId: id })} />}
       {modal === 'account' && <AddAccount onClose={() => setModal(null)} />}
       {modal === 'scheduled' && <Scheduled onClose={() => setModal(null)} />}
       {modal === 'tracking' && <Tracking onClose={() => setModal(null)} />}
@@ -182,33 +187,51 @@ export function App(): JSX.Element {
   )
 }
 
-function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }): JSX.Element {
-  return <div className="modal" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-    <div className={'card' + (wide ? ' wide' : '')}><div className="card-head"><h3>{title}</h3><button className="iconbtn" onClick={onClose} aria-label="Cerrar"><Icon n="x" /></button></div>{children}</div>
+function Modal({ title, onClose, children, wide, cls, extra }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean; cls?: string; extra?: React.ReactNode }): JSX.Element {
+  return <div className={'modal' + (cls === ' max' ? ' max' : '')} onMouseDown={e => e.target === e.currentTarget && onClose()}>
+    <div className={'card' + (wide ? ' wide' : '') + (cls ?? '')}><div className="card-head"><h3>{title}</h3><div style={{ display: 'flex', gap: 2 }}>{extra}<button className="iconbtn" onClick={onClose} aria-label="Cerrar"><Icon n="x" /></button></div></div>{children}</div>
   </div>
 }
 
-function Compose({ accounts, reply, draft, recovering, onClose }: { accounts: any[]; reply: Msg | null; draft: Msg | null; recovering: any | null; onClose: () => void }): JSX.Element {
+/** Ventana de redacción independiente (Word-like): se puede mover, redimensionar y maximizar. */
+export function ComposeWindow({ params }: { params: any }): JSX.Element {
+  const [data, setData] = useState<any>(null)
+  useEffect(() => {
+    void (async () => {
+      const accounts = await api().accounts.list()
+      const reply = params.replyId ? await api().mail.get(params.replyId) : null
+      const draft = params.draftId ? await api().mail.get(params.draftId) : null
+      const rec = params.recoverId ? await api().autodraft.get(params.recoverId) : null
+      setData({ accounts, reply, draft, rec })
+    })()
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  if (!data) return <div className="empty" style={{ height: '100vh' }}>Cargando…</div>
+  return <Compose page accounts={data.accounts} reply={data.reply} draft={data.draft} recovering={data.rec} onClose={() => window.close()} />
+}
+
+function Compose({ accounts, reply, draft, recovering, onClose, page, onPopOut }: { accounts: any[]; reply: Msg | null; draft: Msg | null; recovering: any | null; onClose: () => void; page?: boolean; onPopOut?: (id: string) => void }): JSX.Element {
   const rec = recovering ? JSON.parse(recovering.data) : null
   const draftId = useRef<string>(recovering?.id ?? crypto.randomUUID())
-  const serverUid = useRef<number | undefined>(draft?.uid)
+  const serverUid = useRef<number | undefined>(rec?.serverUid ?? draft?.uid)
   const [sigs, setSigs] = useState<any[] | null>(null)
   useEffect(() => { void api().signatures.list().then(setSigs) }, [])
-  if (!sigs) return <Modal title="Nuevo mensaje" onClose={onClose}><div className="empty">Cargando…</div></Modal>
-  return <ComposeInner key="c" {...{ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose }} />
+  if (!sigs) return page ? <div className="empty" style={{ height: '100vh' }}>Cargando…</div> : <Modal title="Nuevo mensaje" onClose={onClose}><div className="empty">Cargando…</div></Modal>
+  return <ComposeInner key="c" {...{ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }} />
 }
 
 const escHtml = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
 
-function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose }: any): JSX.Element {
+function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }: any): JSX.Element {
   const [from, setFrom] = useState<number>(rec?.from ?? draft?.account_id ?? accounts[0]?.id)
   const [to, setTo] = useState<string>(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? '')
   const [cc, setCc] = useState<string>(rec?.cc ?? ''); const [bcc, setBcc] = useState<string>(rec?.bcc ?? '')
   const [showCc, setShowCc] = useState(!!(rec?.cc || rec?.bcc))
+  const isReply = !!(reply || rec?.inReplyTo)
+  const inReplyTo: string | undefined = reply?.message_id || rec?.inReplyTo || undefined
   const [subject, setSubject] = useState<string>(rec?.subject ?? draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
   const mySigs = (acc: number): any[] => sigs.filter((x: any) => x.account_id === acc)
-  const defaultSig = (acc: number): any | undefined => mySigs(acc).find((x: any) => (reply ? x.for_reply : x.for_new))
-  const [sigId, setSigId] = useState<number>(rec || draft ? 0 : defaultSig(from)?.id ?? 0)
+  const defaultSig = (acc: number): any | undefined => mySigs(acc).find((x: any) => (isReply ? x.for_reply : x.for_new))
+  const [sigId, setSigId] = useState<number>(rec || draft ? (rec?.sigId ?? 0) : defaultSig(from)?.id ?? 0)
   const initial = useRef<string>(
     rec ? (rec.html ?? `<p>${escHtml(rec.body ?? '')}</p>`)
       : draft ? (draft.html || `<p>${escHtml(draft.text ?? '')}</p>`)
@@ -216,22 +239,24 @@ function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, o
   )
   const [html, setHtml] = useState<string>(initial.current)
   const [text, setText] = useState('')
-  const [track, setTrack] = useState(true)
-  const [follow, setFollow] = useState(0)
-  const [at, setAt] = useState('')
+  const [track, setTrack] = useState<boolean>(rec?.track ?? true)
+  const [follow, setFollow] = useState<number>(rec?.follow ?? 0)
+  const [at, setAt] = useState<string>(rec?.at ?? '')
   const [tpls, setTpls] = useState<any[]>([])
   const [err, setErr] = useState('')
-  const [files, setFiles] = useState<{ filename: string; base64: string; size: number }[]>([])
+  const [files, setFiles] = useState<{ filename: string; base64: string; size: number }[]>(rec?.files ?? [])
   const [dropping, setDropping] = useState(false)
   const [undo, setUndo] = useState(0)
+  const [maxed, setMaxed] = useState(false)
   const ed = useRef<Editor | null>(null)
   useEffect(() => { void api().templates.list().then(setTpls) }, [])
+  useEffect(() => { if (page) document.title = subject || (isReply ? 'Responder' : 'Nuevo mensaje') }, [subject, page])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalSize = files.reduce((n, f) => n + f.size, 0)
   const payload = () => ({
     to, cc: cc || undefined, bcc: bcc || undefined, subject,
     html: emailize(html), text: text || undefined,
-    track, followUpDays: follow || undefined, attachments: files.map(({ filename, base64 }) => ({ filename, base64 })), inReplyTo: reply?.message_id || undefined
+    track, followUpDays: follow || undefined, attachments: files.map(({ filename, base64 }) => ({ filename, base64 })), inReplyTo
   })
   async function attach(list: File[] | FileList | null): Promise<void> {
     const out = await Promise.all([...(list ?? [])].map(fileToBase64))
@@ -249,12 +274,13 @@ function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, o
   }
   function changeAccount(id: number): void {
     setFrom(id)
-    const d = sigs.find((x: any) => x.account_id === id && (reply ? x.for_reply : x.for_new))
+    const d = sigs.find((x: any) => x.account_id === id && (isReply ? x.for_reply : x.for_new))
     setSigId(d?.id ?? 0); swapSignature(d?.html ?? '')
   }
   function changeSig(id: number): void { setSigId(id); swapSignature(sigs.find((x: any) => x.id === id)?.html ?? '') }
 
   const cancelled = useRef(false)
+  const done = useRef(false)   // tras enviar/descartar/guardar no se vuelve a autoguardar
   async function send(): Promise<void> {
     try {
       if (at) { await api().send.schedule(from, payload(), new Date(at).getTime()); await discardAuto(); onClose(); return }
@@ -270,63 +296,93 @@ function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, o
   // Autoguardado: local a los 1,5 s de dejar de teclear; servidor cada 20 s si hubo cambios.
   const dirty = useRef(false)
   const latest = useRef<any>({})
-  latest.current = { from, to, cc, bcc, subject, html }
+  latest.current = { from, to, cc, bcc, subject, html, track, follow, at, inReplyTo, sigId, serverUid: serverUid.current }
   const hasContent = !!(to || subject || text.trim() || /<(img|table)/.test(html))
+  const hasRef = useRef(false); hasRef.current = hasContent
+  const saveLocal = (withFiles = false): Promise<unknown> =>
+    api().autodraft.save(draftId.current, JSON.stringify(withFiles ? { ...latest.current, files } : latest.current))
   useEffect(() => {
     if (!hasContent) return
     dirty.current = true
-    const t = setTimeout(() => { void api().autodraft.save(draftId.current, JSON.stringify(latest.current)) }, 1500)
+    const t = setTimeout(() => { if (!done.current) void saveLocal() }, 1500)
     return () => clearTimeout(t)
   }, [from, to, cc, bcc, subject, html, hasContent])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const t = setInterval(async () => {
-      if (!dirty.current || !from) return
+      if (!dirty.current || !from || done.current) return
       dirty.current = false
       try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current } catch { dirty.current = true }
     }, 20000)
     return () => clearInterval(t)
   })
+  // Al cerrar la ventana no se pierde lo último que escribiste
+  useEffect(() => {
+    const f = (): void => { if (!done.current && hasRef.current) void api().autodraft.save(draftId.current, JSON.stringify(latest.current)) }
+    window.addEventListener('beforeunload', f); return () => window.removeEventListener('beforeunload', f)
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   async function discardAuto(): Promise<void> {
+    done.current = true
     await api().autodraft.delete(draftId.current)
     if (serverUid.current && from) await api().send.draftDelete(from, serverUid.current).catch(() => {})
   }
+  async function popOut(): Promise<void> {
+    done.current = true
+    await saveLocal(true)          // incluye adjuntos para que pasen a la ventana nueva
+    onPopOut?.(draftId.current); onClose()
+  }
 
-  return <Modal title={reply ? 'Responder' : 'Nuevo mensaje'} onClose={onClose} wide>
-    <div onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={e => { if (e.currentTarget === e.target) setDropping(false) }}
-      onDrop={e => { if (e.dataTransfer.files.length && !(e.target as HTMLElement).closest('.ProseMirror')) { e.preventDefault(); void attach(e.dataTransfer.files) } setDropping(false) }}
-      className={'compose' + (dropping ? ' dropping' : '')}>
+  const wrapProps = {
+    onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } },
+    onDragLeave: (e: React.DragEvent) => { if (e.currentTarget === e.target) setDropping(false) },
+    onDrop: (e: React.DragEvent) => { if (e.dataTransfer.files.length && !(e.target as HTMLElement).closest('.ProseMirror')) { e.preventDefault(); void attach(e.dataTransfer.files) } setDropping(false) },
+    className: (page ? 'compose-page' : 'compose') + (dropping ? ' dropping' : '')
+  }
+  const fieldsEl = <div className="compose-fields">
+    <label className="field"><span>De</span>
+      <div className="inline2"><select value={from} onChange={e => changeAccount(Number(e.target.value))}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name ? `${a.name} <${a.email}>` : a.email}</option>)}</select>
+        <select title="Firma" value={sigId} onChange={e => changeSig(Number(e.target.value))}><option value={0}>Sin firma</option>{mySigs(from).map((x: any) => <option key={x.id} value={x.id}>Firma: {x.name}</option>)}</select></div></label>
+    <label className="field"><span>Para</span><div className="inline2"><input value={to} onChange={e => setTo(e.target.value)} autoFocus />{!showCc && <button type="button" className="link-btn" onClick={() => setShowCc(true)}>Cc / Cco</button>}</div></label>
+    {showCc && <><label className="field"><span>Cc</span><input value={cc} onChange={e => setCc(e.target.value)} /></label>
+      <label className="field"><span>Cco</span><input value={bcc} onChange={e => setBcc(e.target.value)} /></label></>}
+    <label className="field"><span>Asunto</span><div className="inline2"><input value={subject} onChange={e => setSubject(e.target.value)} />
+      <select value="" onChange={e => { const t = tpls.find(x => x.id === Number(e.target.value)); if (t) { setSubject(s => s || t.subject); ed.current?.chain().focus().insertContent(t.body).run() } }} style={{ maxWidth: 170 }}>
+        <option value="">Plantilla…</option>{tpls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div></label>
+  </div>
+  const editorEl = <RichEditor fill={page} initialHtml={initial.current} minHeight={page ? 420 : maxed ? 380 : 260} onChange={(h, t) => { setHtml(h); setText(t) }} onReady={e => { ed.current = e }} onAttachFiles={f => void attach(f)} />
+  const attachEl = <div className="attach-row">
+    <label className="chip"><Icon n="clip" />Adjuntar archivos<input type="file" multiple hidden onChange={e => { void attach(e.target.files); e.target.value = '' }} /></label>
+    {files.map((f, i) => <span key={i} className="att-chip"><Icon n="file" />{f.filename}<small>{fmtSize(f.size)}</small><button type="button" aria-label="Quitar" onClick={() => setFiles(p => p.filter((_, j) => j !== i))}><Icon n="x" /></button></span>)}
+    {files.length > 0 && <small className={totalSize > 20e6 ? 'warn-t' : ''}>{fmtSize(totalSize)} en total{totalSize > 20e6 ? ' — muchos servidores rechazan más de 20–25 MB' : ''}</small>}
+    {dropping && <span className="drop-hint">Suelta los archivos para adjuntarlos</span>}
+  </div>
+  const optsEl = <div className="row-opts">
+    <label className="toggle"><input type="checkbox" checked={track} onChange={e => setTrack(e.target.checked)} />Seguimiento de lectura</label>
+    <label>Recordar si no responden en <select value={follow} onChange={e => setFollow(Number(e.target.value))}><option value={0}>nunca</option><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option></select></label>
+    <label>Programar: <input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label>
+  </div>
+  const discardBtn = (draft || rec || hasContent) ? <button className="btn" onClick={() => void discardAuto().then(onClose)}>Descartar</button> : null
+  const draftBtn = <button className="btn" onClick={async () => { try { done.current = true; serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current; await api().autodraft.delete(draftId.current); await api().mail.sync(); onClose() } catch (e) { done.current = false; setErr(String(e)) } }}>Guardar borrador</button>
+  const sendBtn = undo > 0
+    ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
+    : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>
+  const errEl = err ? <div style={{ color: 'var(--danger)' }}>{err}</div> : null
+
+  if (page) return (
+    <div {...wrapProps}>
+      <div className="cp-top">
+        <div className="cp-top-l">{sendBtn}{draftBtn}{discardBtn}</div>
+        <span className="hint" style={{ margin: 0 }}>Se guarda automáticamente · puedes cerrar la ventana sin perder nada</span>
+      </div>
+      <div className="cp-scroll"><div className="cp-sheet">{fieldsEl}{editorEl}{attachEl}{optsEl}{errEl}</div></div>
+    </div>
+  )
+  return <Modal title={isReply ? 'Responder' : 'Nuevo mensaje'} onClose={onClose} wide cls={maxed ? ' max' : ''} extra={<>
+    <button className="iconbtn" onClick={() => setMaxed(m => !m)} title={maxed ? 'Reducir' : 'Pantalla completa'} aria-label="Pantalla completa"><Icon n={maxed ? 'shrink' : 'expand'} /></button>
+    <button className="iconbtn" onClick={() => void popOut()} title="Abrir en ventana independiente" aria-label="Abrir en ventana"><Icon n="external" /></button></>}>
+    <div {...wrapProps}>
       <div className="hint">Se guarda automáticamente. Si cierras sin enviar, podrás recuperarlo.</div>
-      <div className="compose-fields">
-        <label className="field"><span>De</span>
-          <div className="inline2"><select value={from} onChange={e => changeAccount(Number(e.target.value))}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name ? `${a.name} <${a.email}>` : a.email}</option>)}</select>
-            <select title="Firma" value={sigId} onChange={e => changeSig(Number(e.target.value))}><option value={0}>Sin firma</option>{mySigs(from).map((x: any) => <option key={x.id} value={x.id}>Firma: {x.name}</option>)}</select></div></label>
-        <label className="field"><span>Para</span><div className="inline2"><input value={to} onChange={e => setTo(e.target.value)} autoFocus />{!showCc && <button type="button" className="link-btn" onClick={() => setShowCc(true)}>Cc / Cco</button>}</div></label>
-        {showCc && <><label className="field"><span>Cc</span><input value={cc} onChange={e => setCc(e.target.value)} /></label>
-          <label className="field"><span>Cco</span><input value={bcc} onChange={e => setBcc(e.target.value)} /></label></>}
-        <label className="field"><span>Asunto</span><div className="inline2"><input value={subject} onChange={e => setSubject(e.target.value)} />
-          <select value="" onChange={e => { const t = tpls.find(x => x.id === Number(e.target.value)); if (t) { setSubject(s => s || t.subject); ed.current?.chain().focus().insertContent(t.body).run() } }} style={{ maxWidth: 170 }}>
-            <option value="">Plantilla…</option>{tpls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div></label>
-      </div>
-      <RichEditor initialHtml={initial.current} minHeight={260} onChange={(h, t) => { setHtml(h); setText(t) }} onReady={e => { ed.current = e }} onAttachFiles={f => void attach(f)} />
-      <div className="attach-row">
-        <label className="chip"><Icon n="clip" />Adjuntar archivos<input type="file" multiple hidden onChange={e => { void attach(e.target.files); e.target.value = '' }} /></label>
-        {files.map((f, i) => <span key={i} className="att-chip"><Icon n="file" />{f.filename}<small>{fmtSize(f.size)}</small><button type="button" aria-label="Quitar" onClick={() => setFiles(p => p.filter((_, j) => j !== i))}><Icon n="x" /></button></span>)}
-        {files.length > 0 && <small className={totalSize > 20e6 ? 'warn-t' : ''}>{fmtSize(totalSize)} en total{totalSize > 20e6 ? ' — muchos servidores rechazan más de 20–25 MB' : ''}</small>}
-        {dropping && <span className="drop-hint">Suelta los archivos para adjuntarlos</span>}
-      </div>
-      <div className="row-opts">
-        <label className="toggle"><input type="checkbox" checked={track} onChange={e => setTrack(e.target.checked)} />Seguimiento de lectura</label>
-        <label>Recordar si no responden en <select value={follow} onChange={e => setFollow(Number(e.target.value))}><option value={0}>nunca</option><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option></select></label>
-        <label>Programar: <input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} /></label>
-      </div>
-      {err && <div style={{ color: 'var(--danger)' }}>{err}</div>}
-      <div className="actions">
-        {(draft || rec || hasContent) && <button className="btn" onClick={() => void discardAuto().then(onClose)}>Descartar</button>}
-        <button className="btn" onClick={async () => { try { serverUid.current = (await api().send.draft(from, payload(), serverUid.current)) ?? serverUid.current; await api().autodraft.delete(draftId.current); await api().mail.sync(); onClose() } catch (e) { setErr(String(e)) } }}>Guardar borrador</button>
-        {undo > 0
-          ? <button className="btn" onClick={() => { cancelled.current = true; setUndo(0) }}>Deshacer envío ({undo})</button>
-          : <button className="btn primary" disabled={!to || !from} onClick={() => { cancelled.current = false; void send() }}>{at ? 'Programar' : 'Enviar'}</button>}
-      </div>
+      {fieldsEl}{editorEl}{attachEl}{optsEl}{errEl}
+      <div className="actions">{discardBtn}{draftBtn}{sendBtn}</div>
     </div>
   </Modal>
 }
@@ -388,6 +444,7 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
   const [url, setUrl] = useState(''); const [key, setKey] = useState('')
   const [relay, setRelay] = useState({ url: '', token: '' }); const [relayMsg, setRelayMsg] = useState('')
   const [autoSpam, setAutoSpam] = useState(true)
+  const [inWin, setInWin] = useState(false)
   const [tpl, setTpl] = useState({ name: '', subject: '', body: '' })
   const [tpls, setTpls] = useState<any[]>([])
   const [sigList, setSigList] = useState<any[]>([])
@@ -397,10 +454,14 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
   const loadT = (): void => { void api().templates.list().then(setTpls) }
   useEffect(() => {
     void api().settings.get('trackerUrl').then(setUrl); void api().settings.get('trackerKey').then(setKey); loadT(); loadS()
+    void api().settings.get('composeInWindow').then((v: string) => setInWin(v === '1'))
     void api().settings.get('autoSpam').then((v: string) => setAutoSpam(v !== '0'))
     void Promise.all([api().settings.get('relayUrl'), api().settings.get('relayToken')]).then(([u, t]) => setRelay({ url: u, token: t }))
   }, [])
   return <Modal title="Ajustes" onClose={onClose} wide>
+    <h5>Redacción</h5>
+    <label className="toggle"><input type="checkbox" checked={inWin} onChange={e => { setInWin(e.target.checked); void api().settings.set('composeInWindow', e.target.checked ? '1' : '0') }} />
+      Redactar siempre en una ventana independiente (movible y redimensionable, estilo Word)</label>
     <h5>Spam</h5>
     <label className="toggle"><input type="checkbox" checked={autoSpam} onChange={e => { setAutoSpam(e.target.checked); void api().settings.set('autoSpam', e.target.checked ? '1' : '0') }} />
       Detección automática de spam (cabeceras del servidor, autenticación y aprendizaje de lo que marcas)</label>
