@@ -1,0 +1,71 @@
+import { ImapFlow } from 'imapflow'
+import { simpleParser } from 'mailparser'
+import { Account, decrypt, listAccounts } from './accounts'
+import { getDb } from './db'
+
+const client = (a: Account): ImapFlow =>
+  new ImapFlow({
+    host: a.imap_host, port: a.imap_port, secure: a.imap_port === 993,
+    auth: { user: a.user, pass: decrypt(a.pass_enc) }, logger: false
+  })
+
+export async function testConnection(a: Account): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  await c.logout()
+}
+
+/** Sincroniza los últimos `limit` mensajes de INBOX (incremental por UID). */
+export async function syncAccount(a: Account, folder = 'INBOX', limit = 200): Promise<number> {
+  const db = getDb()
+  const c = client(a)
+  await c.connect()
+  let added = 0
+  try {
+    const lock = await c.getMailboxLock(folder)
+    try {
+      const last = (db.prepare('SELECT MAX(uid) m FROM messages WHERE account_id=? AND folder=?').get(a.id, folder) as { m: number | null }).m
+      const total = (c.mailbox as { exists: number }).exists
+      const range = last ? `${last + 1}:*` : `${Math.max(1, total - limit + 1)}:*`
+      const ins = db.prepare(`INSERT OR IGNORE INTO messages
+        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      for await (const m of c.fetch(range, { uid: true, source: true, flags: true }, { uid: true })) {
+        if (last && m.uid <= last) continue
+        if (!m.source) continue
+        const p = await simpleParser(m.source)
+        const from = p.from?.value[0]
+        const refs = ([] as string[]).concat(p.references ?? [])
+        const thread = refs[0] ?? p.inReplyTo ?? p.messageId ?? `uid-${m.uid}`
+        const text = p.text ?? ''
+        const r = ins.run(a.id, folder, m.uid, p.messageId ?? null, thread, p.subject ?? '(sin asunto)',
+          from?.name ?? '', from?.address ?? '', p.to ? [p.to].flat().map(t => t.text).join(', ') : '',
+          (p.date ?? new Date()).getTime(), text.replace(/\s+/g, ' ').slice(0, 160),
+          typeof p.html === 'string' ? p.html : '', text,
+          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0)
+        if (r.changes) {
+          added++
+          db.prepare('INSERT INTO messages_fts(rowid,subject,from_addr,text) VALUES(?,?,?,?)')
+            .run(r.lastInsertRowid, p.subject ?? '', from?.address ?? '', text)
+        }
+      }
+    } finally { lock.release() }
+  } finally { await c.logout().catch(() => {}) }
+  return added
+}
+
+export const syncAll = async (): Promise<number> => {
+  let n = 0
+  for (const a of listAccounts()) n += await syncAccount(a).catch(() => 0)
+  return n
+}
+
+export async function setFlag(a: Account, folder: string, uid: number, flag: string, on: boolean): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  const lock = await c.getMailboxLock(folder)
+  try {
+    if (on) await c.messageFlagsAdd({ uid: String(uid) }, [flag], { uid: true })
+    else await c.messageFlagsRemove({ uid: String(uid) }, [flag], { uid: true })
+  } finally { lock.release(); await c.logout().catch(() => {}) }
+}

@@ -1,0 +1,7 @@
+appId: com.jpaneq.mailforge
+productName: MailForge
+directories: { output: dist }
+files: [out/**, package.json]
+mac: { category: public.app-category.productivity, target: [dmg, zip] }
+win: { target: [nsis] }
+nsis: { oneClick: false, allowToChangeInstallationDirectory: true }
