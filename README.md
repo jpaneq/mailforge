@@ -34,7 +34,7 @@ Limitación honesta: Apple Mail Privacy Protection y Gmail precargan imágenes, 
 - [ ] Reglas y filtros, bandeja prioritaria
 - [ ] Combinar correspondencia (mail merge) y secuencias de seguimiento
 - [ ] Clasificación y resúmenes con IA, baja en bloque de newsletters, deduplicación
-- [ ] Envío programado en servidor (sin app abierta), firma/cifrado PGP, calendario
+- [ ] Envío programado con el PC apagado (relay propio, ver abajo), firma/cifrado PGP, calendario
 - [ ] Autoactualización, firma de código
 
 ## Inspiración
@@ -42,3 +42,9 @@ Ideas de UX tomadas de proyectos abiertos como Mailspring (GPL-3), Mail0 e Inbox
 
 ## Licencia
 MIT
+
+## Sincronización con iOS y otros clientes
+Todo vive en el servidor IMAP: los envíos se copian a la carpeta *Enviados* (Gmail lo hace solo), y leído/destacado se sincronizan en ambos sentidos. Lo enviado desde el iPhone aparece también en la app.
+
+## Envío programado con el PC apagado (pendiente)
+Ahora la cola es local: la app debe estar abierta. Para que funcione apagado hace falta un servidor siempre encendido (un cliente de escritorio no puede enviar solo). Opciones evaluadas: relay propio (Docker en VPS/Raspberry/Fly.io) que guarda el mensaje cifrado y lo envía por SMTP a la hora; o el envío diferido nativo de Microsoft 365/Outlook (Graph). Gmail no ofrece API de envío programado.

@@ -5,7 +5,7 @@ import DOMPurify from 'dompurify'
 type Msg = any
 const api = () => window.api
 
-const VIEWS = [['inbox', 'Bandeja'], ['unread', 'No leídos'], ['starred', 'Destacados'], ['snoozed', 'Pospuestos']] as const
+const VIEWS = [['inbox', 'Bandeja'], ['unread', 'No leídos'], ['starred', 'Destacados'], ['sent', 'Enviados'], ['snoozed', 'Pospuestos']] as const
 
 export function App(): JSX.Element {
   const [accounts, setAccounts] = useState<any[]>([])

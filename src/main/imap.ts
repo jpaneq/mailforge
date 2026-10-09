@@ -54,9 +54,35 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200): Pr
   return added
 }
 
+async function sentFolder(c: ImapFlow): Promise<string | null> {
+  const boxes = await c.list()
+  return boxes.find(b => b.specialUse === '\\Sent')?.path
+    ?? boxes.find(b => /^(sent|enviados|sent items|sent messages|elementos enviados)$/i.test(b.name))?.path ?? null
+}
+
+/** Guarda una copia en la carpeta Enviados del servidor (visible desde iOS y otros clientes). */
+export async function appendToSent(a: Account, raw: Buffer): Promise<void> {
+  const c = client(a)
+  await c.connect()
+  try {
+    const f = await sentFolder(c)
+    if (f) await c.append(f, raw, ['\\Seen'])
+  } finally { await c.logout().catch(() => {}) }
+}
+
+export async function syncAccountAll(a: Account): Promise<number> {
+  let n = await syncAccount(a)
+  const c = client(a)
+  await c.connect()
+  const f = await sentFolder(c).catch(() => null)
+  await c.logout().catch(() => {})
+  if (f) n += await syncAccount(a, f, 100)
+  return n
+}
+
 export const syncAll = async (): Promise<number> => {
   let n = 0
-  for (const a of listAccounts()) n += await syncAccount(a).catch(() => 0)
+  for (const a of listAccounts()) n += await syncAccountAll(a).catch(() => 0)
   return n
 }
 

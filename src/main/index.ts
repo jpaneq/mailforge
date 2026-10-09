@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { addAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
-import { setFlag, syncAccount, syncAll, testConnection } from './imap'
+import { setFlag, syncAccountAll, syncAll, testConnection } from './imap'
 import { sendMail, Outgoing } from './smtp'
 import { cancelScheduled, listScheduled, scheduleSend, startBackground } from './scheduler'
 
@@ -26,7 +26,7 @@ function registerIpc(): void {
   ipcMain.handle('accounts:add', async (_e, a) => {
     const id = addAccount(a)
     try { await testConnection(getAccount(id)) } catch (e) { removeAccount(id); throw new Error('No se pudo conectar: ' + String(e)) }
-    void syncAccount(getAccount(id))
+    void syncAccountAll(getAccount(id))
     return id
   })
   ipcMain.handle('accounts:remove', (_e, id: number) => removeAccount(id))
@@ -37,6 +37,7 @@ function registerIpc(): void {
     const now = Date.now()
     const where: string[] = []; const args: unknown[] = []
     if (q.account) { where.push('m.account_id=?'); args.push(q.account) }
+    where.push(q.view === 'sent' ? "m.folder<>'INBOX'" : "m.folder='INBOX'")
     if (q.view === 'snoozed') where.push('m.snoozed_until>' + now)
     else where.push('(m.snoozed_until IS NULL OR m.snoozed_until<=' + now + ')')
     if (q.view === 'starred') where.push('m.starred=1')
