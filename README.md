@@ -14,7 +14,8 @@ Cliente de correo de escritorio para **macOS y Windows** (Electron + React + Typ
 - **Adjuntos:** arrastrar y soltar al redactar, y descarga de los recibidos. Las imágenes viajan incrustadas (cid) y se ven en cualquier cliente
 - **Firmas** múltiples por cuenta con editor completo; una por defecto para correos nuevos y otra para respuestas, intercambiables al redactar. Las respuestas citan el mensaje original
 - Plantillas con formato, atajos (`c` redactar, `/` buscar)
-- **Spam:** carpeta Junk sincronizada, «Spam» / «No es spam» (se mueve en el servidor, también en iOS) y detección automática por capas: cabeceras del servidor, fallos de SPF/DKIM/DMARC y filtro bayesiano que aprende de lo que marcas. Muy conservador, nunca marca a quien ya tiene tu confianza o a quien has escrito
+- **Spam:** carpeta Junk sincronizada, «Spam» / «No es spam» (se mueve en el servidor, también en iOS) y detección automática por capas: cabeceras del servidor, fallos de SPF/DKIM/DMARC, puntuación de contenido (estafas, phishing, promesas de dinero…) y filtro bayesiano que aprende de lo que marcas. Muy conservador, nunca marca a quien ya tiene tu confianza o a quien has escrito
+- **Atajos:** `Supr`/`Borrar` elimina el mensaje abierto (papelera del servidor), `↑↓` cambian de mensaje, `c` redactar, `/` buscar. Las direcciones de correo del mensaje y de la cabecera son pulsables y abren un mensaje nuevo. Autocompletado de destinatarios con gente que te ha escrito o a quien has escrito (nunca spam). «Descargar todos» guarda todos los adjuntos en una carpeta
 - **Contador de no leídos** en el Dock de macOS y como insignia en la barra de tareas de Windows
 - Imágenes remotas bloqueadas al leer (anti-rastreo) y HTML saneado en iframe sandbox
 - CI que genera instaladores `.dmg` y `.exe`

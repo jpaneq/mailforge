@@ -31,8 +31,8 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
       const total = (c.mailbox as { exists: number }).exists
       const range = last ? `${last + 1}:*` : `${Math.max(1, total - limit + 1)}:*`
       const ins = db.prepare(`INSERT OR IGNORE INTO messages
-        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred,role,att)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        (account_id,folder,uid,message_id,thread_id,subject,from_name,from_addr,to_addrs,date,snippet,html,text,seen,starred,role,att,hdr)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       for await (const m of c.fetch(range, { uid: true, source: true, flags: true }, { uid: true })) {
         if (last && m.uid <= last) continue
         if (!m.source) continue
@@ -49,7 +49,8 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
         }
         const attCount = (p.attachments ?? []).filter(at => !(at.cid && at.related)).length
         const seen = m.flags?.has('\\Seen') ? 1 : 0
-        const sp = { message_id: p.messageId, subject: p.subject ?? '', from_addr: from?.address ?? '', text }
+        const sp = { message_id: p.messageId, subject: p.subject ?? '', from_addr: from?.address ?? '', from_name: from?.name ?? '', text }
+        const hdr = JSON.stringify(Object.fromEntries(['x-spam-flag', 'x-spam-status', 'authentication-results'].map(k => [k, p.headers.get(k) ?? null])))
         if (role === 'inbox' && !seen && getSetting('autoSpam', '1') !== '0') {
           const v = classify(a.id, sp, p.headers as Map<string, unknown>)
           if (v.spam) { toSpam.push({ uid: m.uid, id: p.messageId ?? '', reason: v.reason }) }
@@ -61,7 +62,7 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
           from?.name ?? '', from?.address ?? '', p.to ? [p.to].flat().map(t => t.text).join(', ') : '',
           (p.date ?? new Date()).getTime(), text.replace(/\s+/g, ' ').slice(0, 160),
           html, text,
-          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0, role, attCount)
+          m.flags?.has('\\Seen') ? 1 : 0, m.flags?.has('\\Flagged') ? 1 : 0, role, attCount, hdr)
         if (r.changes) {
           added++
           db.prepare('INSERT INTO messages_fts(rowid,subject,from_addr,text) VALUES(?,?,?,?)')
@@ -70,21 +71,54 @@ export async function syncAccount(a: Account, folder = 'INBOX', limit = 200, rol
       }
     } finally { lock.release() }
     // Mover a Junk lo detectado como spam (fuera del bucle de descarga)
-    if (toSpam.length) {
-      const dest = await findFolder(c, 'spam')
-      if (dest) {
-        const l2 = await c.getMailboxLock(folder)
-        try {
-          await c.messageMove(toSpam.map(x => x.uid).join(','), dest, { uid: true })
-          for (const x of toSpam) {
-            if (x.id) db.prepare('INSERT OR REPLACE INTO auto_spam(message_id,reason) VALUES(?,?)').run(x.id, x.reason)
-            db.prepare('DELETE FROM messages WHERE account_id=? AND folder=? AND uid=?').run(a.id, folder, x.uid)
-          }
-        } finally { l2.release() }
-      }
-    }
+    if (toSpam.length) await moveToJunk(c, a, folder, toSpam)
   } finally { await c.logout().catch(() => {}) }
   return added
+}
+
+/** Mueve mensajes a la carpeta de spam del servidor. Si no se puede, los oculta de la bandeja solo en local. */
+async function moveToJunk(c: ImapFlow, a: Account, folder: string, items: { uid: number; id: string; reason: string }[]): Promise<void> {
+  const db = getDb()
+  const remember = (x: { id: string; reason: string }): void => { if (x.id) db.prepare('INSERT OR REPLACE INTO auto_spam(message_id,reason) VALUES(?,?)').run(x.id, x.reason) }
+  let moved = false
+  try {
+    const dest = await findFolder(c, 'spam')
+    if (dest) {
+      const lock = await c.getMailboxLock(folder)
+      try { await c.messageMove(items.map(x => x.uid).join(','), dest, { uid: true }); moved = true } finally { lock.release() }
+    }
+  } catch { /* se oculta en local */ }
+  for (const x of items) {
+    remember(x)
+    if (moved) db.prepare('DELETE FROM messages WHERE account_id=? AND folder=? AND uid=?').run(a.id, folder, x.uid)
+    else db.prepare('UPDATE messages SET spam_local=1 WHERE account_id=? AND folder=? AND uid=?').run(a.id, folder, x.uid)
+  }
+}
+
+/** Analiza lo que ya hay en la bandeja con los filtros de spam y aparta lo sospechoso. Devuelve cuántos mensajes apartó. */
+export async function rescanInbox(): Promise<number> {
+  const db = getDb()
+  let total = 0
+  for (const a of listAccounts()) {
+    const rows = db.prepare("SELECT uid,folder,message_id,subject,from_addr,from_name,text,hdr FROM messages WHERE account_id=? AND role='inbox' AND spam_local=0 AND date>? ORDER BY date DESC LIMIT 1500")
+      .all(a.id, Date.now() - 90 * 864e5) as { uid: number; folder: string; message_id: string | null; subject: string; from_addr: string; from_name: string; text: string; hdr: string | null }[]
+    const hits: { uid: number; id: string; reason: string }[] = []
+    for (const r of rows) {
+      const headers = r.hdr ? new Map(Object.entries(JSON.parse(r.hdr) as Record<string, unknown>).filter(([, v]) => v != null)) : undefined
+      const v = classify(a.id, { message_id: r.message_id, subject: r.subject, from_addr: r.from_addr, from_name: r.from_name, text: r.text ?? '' }, headers)
+      if (v.spam) hits.push({ uid: r.uid, id: r.message_id ?? '', reason: v.reason })
+    }
+    if (!hits.length) continue
+    const c = await client(a)
+    try {
+      await c.connect()
+      await moveToJunk(c, a, 'INBOX', hits)
+    } catch { for (const x of hits) db.prepare("UPDATE messages SET spam_local=1 WHERE account_id=? AND folder='INBOX' AND uid=?").run(a.id, x.uid) }
+    finally { await c.logout().catch(() => {}) }
+    total += hits.length
+  }
+  refreshBadge()
+  return total
 }
 
 async function sentFolder(c: ImapFlow): Promise<string | null> {

@@ -79,7 +79,44 @@ export function isTrusted(accountId: number, from: string): boolean {
 }
 export const trust = (from: string): void => { getDb().prepare('INSERT OR IGNORE INTO trusted(sender) VALUES(?)').run(from.toLowerCase()) }
 
-export function classify(accountId: number, m: SpamInput, headers?: Map<string, unknown>): Verdict {
+const SIGNALS: [RegExp, number, string][] = [
+  [/viagra|cialis|casino|jackpot|loter[ií]a|lottery|bet365|apuestas? gratis/i, 3, 'apuestas/medicamentos'],
+  [/gana(r)? dinero|dinero r[aá]pido|ingresos? pasivos?|trabaja desde casa|work from home|hazte rico|duplica tu (dinero|inversi[oó]n)/i, 3, 'promesas de dinero fácil'],
+  [/has ganado|ganador|felicidades[^.]{0,40}(premio|gan)|you('ve| have) won|reclama tu premio|claim your (prize|reward)/i, 3, 'premio inesperado'],
+  [/herencia|beneficiario|pr[eé]stamo (aprobado|r[aá]pido|sin)|transferencia (urgente|pendiente)|nigeria|mill[oó]n(es)? de (d[oó]lares|euros)/i, 3, 'estafa de dinero'],
+  [/verifica(r)? tu cuenta|cuenta (suspendida|bloqueada|limitada)|tu contrase[nñ]a (caduca|ha caducado|expira)|confirm your (account|password|identity)|actividad sospechosa|unusual (sign-?in|activity)|security alert/i, 3, 'posible phishing'],
+  [/oferta limitada|solo hoy|[úu]ltimas? horas|act now|limited time|100 ?% gratis|gratis!|haz clic aqu[ií]|click here|pulsa aqu[ií] para/i, 2, 'urgencia/ofertas'],
+  [/bitcoin|cripto(moneda)?s?|crypto|invierte hoy|forex|trading (bot|signals)/i, 1, 'inversiones'],
+  [/adelgaz|pierde \d+ ?kilos|aumenta (tu|el) (tama|rendimiento)|pastillas?|miracle|milagro/i, 2, 'salud milagro'],
+  [/unsubscribe|darse de baja|cancelar suscripci[oó]n/i, -1, 'lista de correo']
+]
+const BAD_TLD = /\.(top|xyz|click|loan|win|icu|buzz|monster|gq|cf|tk|ml|ga|biz|work|rest|fit)$/i
+
+/** Puntuación tipo SpamAssassin simplificada: varias señales débiles suman; una sola no basta. */
+export function heuristic(m: SpamInput & { from_name?: string }): { score: number; reasons: string[] } {
+  const reasons: string[] = []; let score = 0
+  const add = (n: number, r: string): void => { score += n; if (n > 0) reasons.push(r) }
+  const hay = `${m.subject}\n${m.text.slice(0, 4000)}`
+  for (const [re, w, label] of SIGNALS) {
+    if (!re.test(hay)) continue
+    // Categorías de estafa (peso 3): cada coincidencia distinta suma, hasta un máximo de dos
+    const distinct = w >= 3 ? new Set((hay.match(new RegExp(re.source, 'gi')) ?? []).map(x => x.toLowerCase())).size : 1
+    add(w * Math.min(2, Math.max(1, distinct)), label)
+  }
+  const letters = m.subject.replace(/[^\p{L}]/gu, '')
+  if (letters.length >= 10 && letters.replace(/[^\p{Lu}]/gu, '').length / letters.length > 0.6) add(2, 'asunto en mayúsculas')
+  if (/!{2,}|¡{2,}/.test(m.subject)) add(1, 'exclamaciones')
+  if (/[$€£]{2,}|\d+ ?[$€] ?(gratis|free)/i.test(m.subject)) add(2, 'símbolos de dinero')
+  const domain = m.from_addr.split('@')[1] ?? ''
+  if (BAD_TLD.test(domain)) add(1, 'dominio sospechoso')
+  const nm = (m.from_name ?? '').match(/[\w.+-]+@([\w.-]+)/)
+  if (nm && nm[1].toLowerCase() !== domain.toLowerCase()) add(3, 'el nombre simula otro remitente')
+  if ((hay.match(/https?:\/\//g) ?? []).length >= 6) add(1, 'muchos enlaces')
+  return { score, reasons }
+}
+const HEURISTIC_THRESHOLD = 5
+
+export function classify(accountId: number, m: SpamInput & { from_name?: string }, headers?: Map<string, unknown>): Verdict {
   if (isTrusted(accountId, m.from_addr)) return { spam: false, reason: '' }
   const flag = hv(headers, 'x-spam-flag').toLowerCase(), status = hv(headers, 'x-spam-status').toLowerCase()
   if (flag.includes('yes') || status.startsWith('yes')) return { spam: true, reason: 'Marcado como spam por el servidor' }
@@ -88,5 +125,7 @@ export function classify(accountId: number, m: SpamInput, headers?: Map<string, 
   if (fails >= 2) return { spam: true, reason: 'Falla la autenticación del remitente (SPF/DKIM/DMARC)' }
   const p = bayes(m)
   if (p !== null && p >= BAYES_THRESHOLD) return { spam: true, reason: `Muy parecido a correos que marcaste como spam (${Math.round(p * 100)} %)` }
+  const h = heuristic(m)
+  if (h.score >= HEURISTIC_THRESHOLD) return { spam: true, reason: `Contenido típico de spam: ${h.reasons.join(', ')}` }
   return { spam: false, reason: '' }
 }

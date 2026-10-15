@@ -44,10 +44,10 @@ function badgePng(label: string): Buffer {
 }
 
 export function unreadCount(): number {
-  return (getDb().prepare("SELECT COUNT(*) n FROM messages WHERE role='inbox' AND seen=0 AND (snoozed_until IS NULL OR snoozed_until<=?)").get(Date.now()) as { n: number }).n
+  return (getDb().prepare("SELECT COUNT(*) n FROM messages WHERE role='inbox' AND spam_local=0 AND seen=0 AND (snoozed_until IS NULL OR snoozed_until<=?)").get(Date.now()) as { n: number }).n
 }
 export function counts(): { unread: number; spam: number } {
-  const spam = (getDb().prepare("SELECT COUNT(*) n FROM messages WHERE role='spam' AND seen=0").get() as { n: number }).n
+  const spam = (getDb().prepare("SELECT COUNT(*) n FROM messages WHERE (role='spam' OR spam_local=1) AND seen=0").get() as { n: number }).n
   return { unread: unreadCount(), spam }
 }
 

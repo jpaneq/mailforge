@@ -1,10 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron'
-import { writeFileSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
+import { basename, extname } from 'path'
 import { join } from 'path'
 import { getDb, getSetting, setSetting } from './db'
 import { googleSignIn } from './oauth'
 import { addAccount, addGoogleAccount, getAccount, listAccounts, PRESETS, removeAccount } from './accounts'
-import { fetchAttachments, moveMessage, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
+import { fetchAttachments, moveMessage, rescanInbox, setFlag, syncAccountAll, syncAll, testConnection } from './imap'
 import { sendMail, saveDraftMail, removeDraft, Outgoing } from './smtp'
 import { refreshBadge, counts } from './badge'
 import { train, trust } from './spam'
@@ -74,6 +75,26 @@ function registerIpc(): void {
     const m = db.prepare('SELECT account_id,folder,uid FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
     return (await fetchAttachments(getAccount(m.account_id), m.folder, m.uid)).map(x => x.info)
   })
+  ipcMain.handle('mail:saveAllAttachments', async (e, id: number) => {
+    const m = db.prepare('SELECT account_id,folder,uid FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
+    const all = await fetchAttachments(getAccount(m.account_id), m.folder, m.uid)
+    if (!all.length) return { count: 0 }
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const r = await dialog.showOpenDialog(win!, { title: 'Elige la carpeta donde guardar los adjuntos', properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Guardar aquí' })
+    if (r.canceled || !r.filePaths[0]) return { count: 0, canceled: true }
+    let first = ''
+    for (const a of all) {
+      // basename evita que un nombre de adjunto malicioso (../../) escriba fuera de la carpeta elegida
+      const safe = basename(a.info.filename).replace(/[\\/:*?"<>|]/g, '_') || 'adjunto'
+      const ext = extname(safe), stem = safe.slice(0, safe.length - ext.length)
+      let target = join(r.filePaths[0], safe), n = 1
+      while (existsSync(target)) target = join(r.filePaths[0], `${stem} (${n++})${ext}`)
+      writeFileSync(target, a.content)
+      first ||= target
+    }
+    shell.showItemInFolder(first)
+    return { count: all.length, folder: r.filePaths[0] }
+  })
   ipcMain.handle('mail:saveAttachment', async (e, id: number, index: number) => {
     const m = db.prepare('SELECT account_id,folder,uid FROM messages WHERE id=?').get(id) as { account_id: number; folder: string; uid: number }
     const att = (await fetchAttachments(getAccount(m.account_id), m.folder, m.uid))[index]
@@ -89,7 +110,7 @@ function registerIpc(): void {
     const now = Date.now()
     const where: string[] = []; const args: unknown[] = []
     if (q.account) { where.push('m.account_id=?'); args.push(q.account) }
-    where.push(q.view === 'sent' ? "m.role='sent'" : q.view === 'drafts' ? "m.role='drafts'" : q.view === 'spam' ? "m.role='spam'" : "m.role='inbox'")
+    where.push(q.view === 'sent' ? "m.role='sent'" : q.view === 'drafts' ? "m.role='drafts'" : q.view === 'spam' ? "(m.role='spam' OR m.spam_local=1)" : "m.role='inbox' AND m.spam_local=0")
     if (q.view === 'snoozed') where.push('m.snoozed_until>' + now)
     else where.push('(m.snoozed_until IS NULL OR m.snoozed_until<=' + now + ')')
     if (q.view === 'starred') where.push('m.starred=1')
@@ -99,7 +120,7 @@ function registerIpc(): void {
       from = 'messages m JOIN messages_fts f ON f.rowid=m.id'
       where.push('messages_fts MATCH ?'); args.push(q.query.replace(/["']/g, ' ') + '*')
     }
-    return db.prepare(`SELECT m.id,m.message_id,m.att,m.role,(SELECT reason FROM auto_spam WHERE message_id=m.message_id) AS spam_reason,m.to_addrs,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
+    return db.prepare(`SELECT m.id,m.message_id,m.att,m.role,m.spam_local,(SELECT reason FROM auto_spam WHERE message_id=m.message_id) AS spam_reason,m.to_addrs,m.account_id,m.uid,m.folder,m.thread_id,m.subject,m.from_name,m.from_addr,m.date,m.snippet,m.seen,m.starred,m.snoozed_until
       FROM ${from} WHERE ${where.join(' AND ')} ORDER BY m.date DESC LIMIT 500`).all(...args)
   })
   ipcMain.handle('mail:thread', (_e, threadId: string) =>
@@ -120,18 +141,54 @@ function registerIpc(): void {
   type Row = { account_id: number; folder: string; uid: number; message_id: string; subject: string; from_addr: string; text: string }
   ipcMain.handle('mail:spam', async (_e, id: number) => {
     const m = db.prepare('SELECT * FROM messages WHERE id=?').get(id) as Row
-    await moveMessage(getAccount(m.account_id), m.folder, m.uid, 'spam')
+    try { await moveMessage(getAccount(m.account_id), m.folder, m.uid, 'spam') } catch (e) {
+      // Sin carpeta de spam en el servidor: se oculta solo en este equipo
+      train(m, true); db.prepare('UPDATE messages SET spam_local=1 WHERE id=?').run(id); refreshBadge(); return
+    }
     train(m, true)
     db.prepare('DELETE FROM messages WHERE id=?').run(id)
     refreshBadge(); void syncAccountAll(getAccount(m.account_id)).then(refreshBadge)
   })
   ipcMain.handle('mail:notspam', async (_e, id: number) => {
-    const m = db.prepare('SELECT * FROM messages WHERE id=?').get(id) as Row
+    const m = db.prepare('SELECT *, role AS _role, spam_local AS _local FROM messages WHERE id=?').get(id) as Row & { _role: string; _local: number }
+    if (m._role === 'inbox' && m._local) {   // solo estaba oculto en local: basta con devolverlo a la bandeja
+      train(m, false); trust(m.from_addr)
+      db.prepare('DELETE FROM auto_spam WHERE message_id=?').run(m.message_id ?? ''); db.prepare('UPDATE messages SET spam_local=0 WHERE id=?').run(id); refreshBadge(); return
+    }
     await moveMessage(getAccount(m.account_id), m.folder, m.uid, 'inbox')
     train(m, false); trust(m.from_addr)
     db.prepare('DELETE FROM auto_spam WHERE message_id=?').run(m.message_id ?? '')
     db.prepare('DELETE FROM messages WHERE id=?').run(id)
     refreshBadge(); void syncAccountAll(getAccount(m.account_id)).then(refreshBadge)
+  })
+  ipcMain.handle('spam:rescan', () => rescanInbox())
+  ipcMain.handle('shell:open', (_e, url: string) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+  })
+  // Autocompletado de destinatarios: gente que te ha escrito o a quien has escrito (sin spam)
+  ipcMain.handle('contacts:search', (_e, q: string) => {
+    const term = q.trim().toLowerCase()
+    if (term.length < 1) return []
+    const own = new Set(listAccounts().map(a => a.email.toLowerCase()))
+    const like = `%${term.replace(/[%_]/g, '')}%`
+    const map = new Map<string, { email: string; name: string; n: number; last: number }>()
+    const bump = (email: string, name: string, date: number, w: number): void => {
+      email = email.toLowerCase().trim()
+      if (!email.includes('@') || own.has(email)) return
+      const c = map.get(email) ?? { email, name: '', n: 0, last: 0 }
+      c.n += w; c.last = Math.max(c.last, date); if (name && !c.name) c.name = name
+      map.set(email, c)
+    }
+    for (const r of db.prepare("SELECT from_addr, from_name, date FROM messages WHERE role='inbox' AND spam_local=0 AND (lower(from_addr) LIKE ? OR lower(from_name) LIKE ?) ORDER BY date DESC LIMIT 400").all(like, like) as { from_addr: string; from_name: string; date: number }[])
+      bump(r.from_addr, r.from_name, r.date, 1)
+    // A quien has escrito pesa más: es lo que más se vuelve a usar
+    for (const r of db.prepare("SELECT to_addrs, date FROM messages WHERE role='sent' AND lower(to_addrs) LIKE ? ORDER BY date DESC LIMIT 400").all(like) as { to_addrs: string; date: number }[]) {
+      for (const part of r.to_addrs.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)) {
+        const m = part.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/) ?? part.match(/^\s*()([^\s<>]+@[^\s<>]+)\s*$/)
+        if (m && `${m[1]} ${m[2]}`.toLowerCase().includes(term)) bump(m[2], m[1], r.date, 3)
+      }
+    }
+    return [...map.values()].sort((a, b) => (b.n - a.n) || (b.last - a.last)).slice(0, 8).map(({ email, name }) => ({ email, name }))
   })
   ipcMain.handle('compose:open', (_e, params: Record<string, unknown>) => createComposeWindow(params ?? {}))
   ipcMain.handle('mail:get', (_e, id: number) => db.prepare('SELECT * FROM messages WHERE id=?').get(id))
@@ -168,7 +225,10 @@ app.whenReady().then(() => {
   createWindow()
   startBackground()
   refreshBadge()
-  void syncAll()
+  void syncAll().then(async () => {
+    // Una vez tras esta actualización: aplicar los filtros a lo que ya había en la bandeja
+    if (getSetting('spamRescan', '0') !== '2' && getSetting('autoSpam', '1') !== '0') { await rescanInbox().catch(() => 0); setSetting('spamRescan', '2') }
+  })
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

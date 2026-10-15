@@ -21,6 +21,70 @@ function Avatar({ name, large }: { name: string; large?: boolean }): JSX.Element
   return <div className={'avatar' + (large ? ' lg' : '')} style={{ background: `linear-gradient(135deg, ${a}, ${b})` }}>{ini}</div>
 }
 
+const escapeHtml = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+/** Texto plano → HTML con enlaces y direcciones de correo pulsables. */
+const linkify = (t: string): string => escapeHtml(t)
+  .replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, '<a href="$1">$1</a>')
+  .replace(/(^|[\s(<;,])([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g, '$1<a href="mailto:$2">$2</a>')
+const parseAddrs = (s: string): { name: string; email: string }[] =>
+  [...(s ?? '').matchAll(/"?([^"<,]*?)"?\s*<([^>]+)>|([^\s,<>]+@[^\s,<>]+)/g)].map(m => ({ name: (m[1] ?? '').trim(), email: (m[2] ?? m[3]).trim() }))
+const parseMailto = (href: string): { to: string; subject?: string } => {
+  try { const u = new URL(href); return { to: decodeURIComponent(u.pathname), subject: u.searchParams.get('subject') ?? undefined } } catch { return { to: href.replace(/^mailto:/i, '') } }
+}
+const FRAME_CSS = '<style>html,body{margin:0}body{padding:14px 16px;font:14px/1.5 -apple-system,"Segoe UI",sans-serif;color:#1c1e21;overflow-y:hidden;overflow-wrap:anywhere}a{color:#4f46e5;cursor:pointer}img{max-width:100%;height:auto}blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:3px solid #d6d9e3;color:#5b6073}table{max-width:100%}</style>'
+
+/** Cuerpo del mensaje: aislado (sin scripts), pero con enlaces y correos pulsables. */
+function MailFrame({ html, onMailto }: { html: string; onMailto: (href: string) => void }): JSX.Element {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [h, setH] = useState(160)
+  const onLoad = (): void => {
+    const doc = ref.current?.contentDocument; if (!doc) return
+    const resize = (): void => setH(Math.max(60, doc.body.offsetHeight))
+    resize(); doc.querySelectorAll('img').forEach(i => i.addEventListener('load', resize))
+    doc.addEventListener('click', ev => {
+      const a = (ev.target as HTMLElement).closest?.('a'); if (!a) return
+      ev.preventDefault()
+      const href = a.getAttribute('href') ?? ''
+      if (/^mailto:/i.test(href)) onMailto(href); else if (/^https?:/i.test(href)) void api().shell.open(href)
+    })
+  }
+  // allow-same-origin SIN allow-scripts: los scripts siguen bloqueados; solo permite que la app capture los clics en enlaces
+  return <iframe ref={ref} sandbox="allow-same-origin" srcDoc={FRAME_CSS + html} onLoad={onLoad} style={{ height: h }} />
+}
+
+/** Campo de destinatarios con autocompletado desde tus contactos. */
+function RecipientInput({ value, onChange, autoFocus }: { value: string; onChange: (v: string) => void; autoFocus?: boolean }): JSX.Element {
+  const [sugs, setSugs] = useState<{ email: string; name: string }[]>([])
+  const [idx, setIdx] = useState(0)
+  const timer = useRef<number>()
+  const token = (v: string): string => (v.split(/[,;]/).pop() ?? '').trim()
+  const input = (v: string): void => {
+    onChange(v)
+    const t = token(v); window.clearTimeout(timer.current)
+    if (!t) { setSugs([]); return }
+    timer.current = window.setTimeout(async () => { setSugs(await api().contacts.search(t)); setIdx(0) }, 110)
+  }
+  const fmt = (c: { email: string; name: string }): string => !c.name ? c.email : /[,"<>]/.test(c.name) ? `"${c.name.replace(/"/g, '')}" <${c.email}>` : `${c.name} <${c.email}>`
+  const pick = (c: { email: string; name: string }): void => {
+    const head = value.slice(0, value.search(/[^,;]*$/)).trimEnd()
+    onChange((head ? head + ' ' : '') + fmt(c) + ', '); setSugs([])
+  }
+  return <div className="recip">
+    <input value={value} autoFocus={autoFocus} autoComplete="off" spellCheck={false} onChange={e => input(e.target.value)} onBlur={() => window.setTimeout(() => setSugs([]), 120)}
+      onKeyDown={e => {
+        if (!sugs.length) return
+        if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => (i + 1) % sugs.length) }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => (i - 1 + sugs.length) % sugs.length) }
+        else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sugs[idx]) }
+        else if (e.key === 'Escape') { e.stopPropagation(); setSugs([]) }
+      }} />
+    {sugs.length > 0 && <div className="sugg" onMouseDown={e => e.preventDefault()}>
+      {sugs.map((c, i) => <button type="button" key={c.email} className={i === idx ? 'on' : ''} onMouseEnter={() => setIdx(i)} onClick={() => pick(c)}>
+        <Avatar name={c.name || c.email} /><span><b>{c.name || c.email}</b>{c.name && <small>{c.email}</small>}</span></button>)}
+    </div>}
+  </div>
+}
+
 const fmtTime = (t: number): string => {
   const d = new Date(t), now = new Date()
   if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -42,10 +106,12 @@ export function App(): JSX.Element {
   const [counts, setCounts] = useState({ unread: 0, spam: 0 })
   const [sel, setSel] = useState<Msg | null>(null)
   const [thread, setThread] = useState<Msg[]>([])
+  const [savedMsg, setSavedMsg] = useState('')
   const [atts, setAtts] = useState<{ index: number; filename: string; size: number }[] | 'loading' | null>(null)
   const [modal, setModal] = useState<'compose' | 'account' | 'scheduled' | 'tracking' | 'settings' | null>(null)
   const [reply, setReply] = useState<Msg | null>(null)
   const [draft, setDraft] = useState<Msg | null>(null)
+  const [prefill, setPrefill] = useState<{ to: string; subject?: string } | null>(null)
   const [recover, setRecover] = useState<any[]>([])
   const [recovering, setRecovering] = useState<any | null>(null)
   const [inWindow, setInWindow] = useState(false)
@@ -63,17 +129,34 @@ export function App(): JSX.Element {
   useEffect(() => { document.title = counts.unread ? `(${counts.unread}) MailForge` : 'MailForge' }, [counts.unread])
 
   async function open(m: Msg): Promise<void> {
-    setSel(m); setAtts(m.att ? 'loading' : null)
+    setSel(m); setSavedMsg(''); setAtts(m.att ? 'loading' : null)
     setThread(await api().mail.thread(m.thread_id))
     if (m.att) api().mail.attachments(m.id).then(setAtts).catch(() => setAtts(null))
     if (!m.seen) { await api().mail.flag(m.id, 'seen', true); void load() }
   }
   const act = async (fn: () => Promise<unknown>): Promise<void> => { await fn(); setSel(null); void load() }
   const snooze = (hours: number): Promise<void> => act(() => api().mail.snooze(sel!.id, Date.now() + hours * 3600e3))
-  const openCompose = (p: { replyId?: number; draftId?: number; recoverId?: string }, fallback: () => void): void => {
-    if (inWindow) void api().compose.open(p); else fallback()
+  const openCompose = (p: { replyId?: number; draftId?: number; recoverId?: string; to?: string; subject?: string }, fallback: () => void): void => {
+    if (inWindow) { void api().compose.open(p); return }
+    setPrefill(p.to ? { to: p.to, subject: p.subject } : null); fallback()
   }
+  // Pulsar una dirección de correo (cabecera o dentro del mensaje) abre un mensaje nuevo para esa persona
+  const composeTo = (to: string, subject?: string): void => openCompose({ to, subject }, () => { setReply(null); setDraft(null); setRecovering(null); setModal('compose') })
   const newMail = (): void => openCompose({}, () => { setReply(null); setDraft(null); setRecovering(null); setModal('compose') })
+
+  // Supr / Borrar elimina el mensaje abierto (va a la papelera del servidor); flechas ↑↓ cambian de mensaje
+  useEffect(() => {
+    const h = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement
+      if (modal || !sel || /INPUT|TEXTAREA|SELECT/.test(t.tagName) || t.isContentEditable || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); void act(() => api().mail.move(sel.id, 'trash')) }
+      else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && t === document.body) {
+        const i = msgs.findIndex(m => m.id === sel.id), n = msgs[i + (e.key === 'ArrowDown' ? 1 : -1)]
+        if (n) { e.preventDefault(); void open(n) }
+      }
+    }
+    window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
+  })
 
   // Atajos: c redactar, / buscar
   useEffect(() => {
@@ -140,7 +223,7 @@ export function App(): JSX.Element {
         <div className="reader-inner">
           {!sel ? <div className="empty" style={{ minHeight: '70vh' }}><Icon n="mail" /><div>Selecciona un mensaje para leerlo</div><div className="hint">Atajos: <b>c</b> redactar · <b>/</b> buscar</div></div> : (
             <>
-              {sel.role === 'spam' && (
+              {(sel.role === 'spam' || sel.spam_local === 1) && (
                 <div className="banner"><Icon n="shield" /><div><b>{sel.spam_reason ? 'Movido a spam automáticamente' : 'Este mensaje está en spam'}</b><br /><small>{sel.spam_reason || 'Marcado como spam en tu servidor.'}</small></div>
                   <button className="tb ok" onClick={() => void act(() => api().mail.notSpam(sel.id))}><Icon n="shieldok" />No es spam</button></div>
               )}
@@ -152,8 +235,8 @@ export function App(): JSX.Element {
                 <button className="tb" onClick={async () => { await api().mail.flag(sel.id, 'starred', !sel.starred); setSel({ ...sel, starred: sel.starred ? 0 : 1 }); void load() }}><Icon n="star" />{sel.starred ? 'Quitar' : 'Destacar'}</button>
                 <span className="sep" />
                 <button className="tb" onClick={() => void act(() => api().mail.move(sel.id, 'archive'))}><Icon n="archive" />Archivar</button>
-                {sel.role !== 'spam' && sel.role !== 'drafts' && sel.role !== 'sent' && <button className="tb" onClick={() => void act(() => api().mail.spam(sel.id))}><Icon n="shield" />Spam</button>}
-                <button className="tb danger" onClick={() => void act(() => api().mail.move(sel.id, 'trash'))}><Icon n="trash" />Borrar</button>
+                {sel.role !== 'spam' && !sel.spam_local && sel.role !== 'drafts' && sel.role !== 'sent' && <button className="tb" onClick={() => void act(() => api().mail.spam(sel.id))}><Icon n="shield" />Spam</button>}
+                <button className="tb danger" onClick={() => void act(() => api().mail.move(sel.id, 'trash'))}><Icon n="trash" />Borrar<kbd>Supr</kbd></button>
                 <span className="sep" />
                 <button className="tb" onClick={() => void snooze(3)}><Icon n="clock" />3 h</button>
                 <button className="tb" onClick={() => void snooze(24)}>Mañana</button>
@@ -163,13 +246,18 @@ export function App(): JSX.Element {
                 <div key={t.id} className="msg">
                   <div className="msg-head">
                     <Avatar name={t.from_name || t.from_addr} large />
-                    <div><b>{t.from_name || t.from_addr}</b><small>{t.from_name ? t.from_addr + ' · ' : ''}{new Date(t.date).toLocaleString()}</small></div>
+                    <div><b>{t.from_name || t.from_addr}</b>
+                      <small><button className="addr" title={`Escribir a ${t.from_addr}`} onClick={() => composeTo(t.from_addr)}>{t.from_addr}</button> · {new Date(t.date).toLocaleString()}</small>
+                      {t.to_addrs && <small className="to-line">Para: {parseAddrs(t.to_addrs).map((x, i, arr) => <span key={i}><button className="addr" title={`Escribir a ${x.email}`} onClick={() => composeTo(x.email)}>{x.name || x.email}</button>{i < arr.length - 1 ? ', ' : ''}</span>)}</small>}
+                    </div>
                   </div>
-                  <iframe sandbox="" srcDoc={readerHtml(t.html || `<pre style="white-space:pre-wrap;font:inherit">${DOMPurify.sanitize(t.text)}</pre>`)} />
+                  <MailFrame onMailto={href => { const m = parseMailto(href); composeTo(m.to, m.subject) }} html={t.html ? readerHtml(t.html) : `<div style="white-space:pre-wrap">${linkify(t.text ?? '')}</div>`} />
                 </div>
               ))}
               {atts && <div className="atts">
-                <b><Icon n="clip" />{atts === 'loading' ? 'Cargando adjuntos…' : `${atts.length} adjunto${atts.length === 1 ? '' : 's'}`}</b>
+                <b><Icon n="clip" />{atts === 'loading' ? 'Cargando adjuntos…' : `${atts.length} adjunto${atts.length === 1 ? '' : 's'}`}
+                  {atts !== 'loading' && atts.length > 1 && <button className="chip accent" style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }} onClick={async () => { const r = await api().mail.saveAllAttachments(sel.id); if (r?.count) setSavedMsg(`${r.count} adjuntos guardados`) }}><Icon n="download" />Descargar todos</button>}
+                  {savedMsg && <small style={{ color: 'var(--ok)', textTransform: 'none', letterSpacing: 0 }}>✓ {savedMsg}</small>}</b>
                 {atts !== 'loading' && atts.map(a => <button key={a.index} className="att" onClick={() => void api().mail.saveAttachment(sel.id, a.index)}><Icon n="download" /><span>{a.filename}</span><small>{fmtSize(a.size)}</small></button>)}
               </div>}
               <div className="hint">Las imágenes remotas se bloquean para evitar rastreadores de terceros.</div>
@@ -178,7 +266,7 @@ export function App(): JSX.Element {
         </div>
       </main>
 
-      {modal === 'compose' && <Compose accounts={accounts} reply={reply} draft={draft} recovering={recovering} onClose={() => { setModal(null); void load() }} onPopOut={id => void api().compose.open({ recoverId: id })} />}
+      {modal === 'compose' && <Compose prefill={prefill} accounts={accounts} reply={reply} draft={draft} recovering={recovering} onClose={() => { setModal(null); void load() }} onPopOut={id => void api().compose.open({ recoverId: id })} />}
       {modal === 'account' && <AddAccount onClose={() => setModal(null)} />}
       {modal === 'scheduled' && <Scheduled onClose={() => setModal(null)} />}
       {modal === 'tracking' && <Tracking onClose={() => setModal(null)} />}
@@ -206,29 +294,29 @@ export function ComposeWindow({ params }: { params: any }): JSX.Element {
     })()
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   if (!data) return <div className="empty" style={{ height: '100vh' }}>Cargando…</div>
-  return <Compose page accounts={data.accounts} reply={data.reply} draft={data.draft} recovering={data.rec} onClose={() => window.close()} />
+  return <Compose page accounts={data.accounts} reply={data.reply} draft={data.draft} recovering={data.rec} prefill={params.to ? { to: params.to, subject: params.subject } : null} onClose={() => window.close()} />
 }
 
-function Compose({ accounts, reply, draft, recovering, onClose, page, onPopOut }: { accounts: any[]; reply: Msg | null; draft: Msg | null; recovering: any | null; onClose: () => void; page?: boolean; onPopOut?: (id: string) => void }): JSX.Element {
+function Compose({ prefill, accounts, reply, draft, recovering, onClose, page, onPopOut }: { prefill?: { to: string; subject?: string } | null; accounts: any[]; reply: Msg | null; draft: Msg | null; recovering: any | null; onClose: () => void; page?: boolean; onPopOut?: (id: string) => void }): JSX.Element {
   const rec = recovering ? JSON.parse(recovering.data) : null
   const draftId = useRef<string>(recovering?.id ?? crypto.randomUUID())
   const serverUid = useRef<number | undefined>(rec?.serverUid ?? draft?.uid)
   const [sigs, setSigs] = useState<any[] | null>(null)
   useEffect(() => { void api().signatures.list().then(setSigs) }, [])
   if (!sigs) return page ? <div className="empty" style={{ height: '100vh' }}>Cargando…</div> : <Modal title="Nuevo mensaje" onClose={onClose}><div className="empty">Cargando…</div></Modal>
-  return <ComposeInner key="c" {...{ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }} />
+  return <ComposeInner key="c" {...{ prefill, accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }} />
 }
 
 const escHtml = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
 
-function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }: any): JSX.Element {
+function ComposeInner({ prefill, accounts, reply, draft, rec, draftId, serverUid, sigs, onClose, page, onPopOut }: any): JSX.Element {
   const [from, setFrom] = useState<number>(rec?.from ?? draft?.account_id ?? accounts[0]?.id)
-  const [to, setTo] = useState<string>(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? '')
+  const [to, setTo] = useState<string>(rec?.to ?? draft?.to_addrs ?? reply?.from_addr ?? prefill?.to ?? '')
   const [cc, setCc] = useState<string>(rec?.cc ?? ''); const [bcc, setBcc] = useState<string>(rec?.bcc ?? '')
   const [showCc, setShowCc] = useState(!!(rec?.cc || rec?.bcc))
   const isReply = !!(reply || rec?.inReplyTo)
   const inReplyTo: string | undefined = reply?.message_id || rec?.inReplyTo || undefined
-  const [subject, setSubject] = useState<string>(rec?.subject ?? draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : ''))
+  const [subject, setSubject] = useState<string>(rec?.subject ?? draft?.subject ?? (reply ? 'Re: ' + reply.subject.replace(/^re:\s*/i, '') : prefill?.subject ?? ''))
   const mySigs = (acc: number): any[] => sigs.filter((x: any) => x.account_id === acc)
   const defaultSig = (acc: number): any | undefined => mySigs(acc).find((x: any) => (isReply ? x.for_reply : x.for_new))
   const [sigId, setSigId] = useState<number>(rec || draft ? (rec?.sigId ?? 0) : defaultSig(from)?.id ?? 0)
@@ -341,9 +429,9 @@ function ComposeInner({ accounts, reply, draft, rec, draftId, serverUid, sigs, o
     <label className="field"><span>De</span>
       <div className="inline2"><select value={from} onChange={e => changeAccount(Number(e.target.value))}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name ? `${a.name} <${a.email}>` : a.email}</option>)}</select>
         <select title="Firma" value={sigId} onChange={e => changeSig(Number(e.target.value))}><option value={0}>Sin firma</option>{mySigs(from).map((x: any) => <option key={x.id} value={x.id}>Firma: {x.name}</option>)}</select></div></label>
-    <label className="field"><span>Para</span><div className="inline2"><input value={to} onChange={e => setTo(e.target.value)} autoFocus />{!showCc && <button type="button" className="link-btn" onClick={() => setShowCc(true)}>Cc / Cco</button>}</div></label>
-    {showCc && <><label className="field"><span>Cc</span><input value={cc} onChange={e => setCc(e.target.value)} /></label>
-      <label className="field"><span>Cco</span><input value={bcc} onChange={e => setBcc(e.target.value)} /></label></>}
+    <label className="field"><span>Para</span><div className="inline2"><RecipientInput value={to} onChange={setTo} autoFocus />{!showCc && <button type="button" className="link-btn" onClick={() => setShowCc(true)}>Cc / Cco</button>}</div></label>
+    {showCc && <><label className="field"><span>Cc</span><RecipientInput value={cc} onChange={setCc} /></label>
+      <label className="field"><span>Cco</span><RecipientInput value={bcc} onChange={setBcc} /></label></>}
     <label className="field"><span>Asunto</span><div className="inline2"><input value={subject} onChange={e => setSubject(e.target.value)} />
       <select value="" onChange={e => { const t = tpls.find(x => x.id === Number(e.target.value)); if (t) { setSubject(s => s || t.subject); ed.current?.chain().focus().insertContent(t.body).run() } }} style={{ maxWidth: 170 }}>
         <option value="">Plantilla…</option>{tpls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div></label>
@@ -487,6 +575,7 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
   const [relay, setRelay] = useState({ url: '', token: '' }); const [relayMsg, setRelayMsg] = useState('')
   const [autoSpam, setAutoSpam] = useState(true)
   const [inWin, setInWin] = useState(false)
+  const [scan, setScan] = useState('')
   const [tpl, setTpl] = useState({ name: '', subject: '', body: '' })
   const [tpls, setTpls] = useState<any[]>([])
   const [sigList, setSigList] = useState<any[]>([])
@@ -508,6 +597,8 @@ function Settings({ accounts, onClose }: { accounts: any[]; onClose: () => void 
     <label className="toggle"><input type="checkbox" checked={autoSpam} onChange={e => { setAutoSpam(e.target.checked); void api().settings.set('autoSpam', e.target.checked ? '1' : '0') }} />
       Detección automática de spam (cabeceras del servidor, autenticación y aprendizaje de lo que marcas)</label>
     <div className="hint">Solo se mueven mensajes con evidencia fuerte. Todo queda en la carpeta Spam de tu servidor y puedes recuperarlo con «No es spam».</div>
+    <div className="actions" style={{ justifyContent: 'space-between' }}><small>{scan}</small>
+      <button className="btn" onClick={async () => { setScan('Analizando…'); try { const n = await api().spam.rescan(); setScan(n ? `Se apartaron ${n} mensajes sospechosos` : 'No se encontró spam nuevo') } catch { setScan('No se pudo analizar') } }}>Analizar la bandeja ahora</button></div>
     <h5>Servidor de seguimiento</h5>
     <input placeholder="https://mi-tracker.workers.dev" value={url} onChange={e => setUrl(e.target.value)} />
     <input placeholder="Clave (opcional)" value={key} onChange={e => setKey(e.target.value)} />
